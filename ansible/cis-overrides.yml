@@ -1,0 +1,28 @@
+---
+win_2022_cis_setup_audit: true
+
+win_2022_cis_pass_max_days: 60
+win_2022_cis_pass_min_days: 1
+win_2022_cis_pass_complex: true
+
+win_2022_cis_rule_1_2_1: true
+win_2022_cis_rule_1_2_2: true
+win_2022_cis_rule_1_2_3: true
+
+win_2022_cis_rule_18_2_1: true
+win_2022_cis_rule_18_2_2: true
+win_2022_cis_rule_18_2_3: true
+win_2022_cis_rule_18_2_4: true
+win_2022_cis_rule_18_2_5: true
+win_2022_cis_rule_18_2_6: true
+
+win_2022_cis_rule_9_1_1: true   # Windows Firewall: Domain: on
+win_2022_cis_rule_9_1_2: true   # Windows Firewall: Domain: inbound block
+win_2022_cis_rule_9_1_3: true   # Windows Firewall: Domain: no notifications
+win_2022_cis_rule_9_2_1: true   # Windows Firewall: Private: on
+win_2022_cis_rule_9_2_2: true   # Windows Firewall: Private: inbound block
+win_2022_cis_rule_9_3_1: true   # Windows Firewall: Public: on
+win_2022_cis_rule_9_3_2: true   # Windows Firewall: Public: inbound block
+
+win_2022_cis_rule_2_2_2: false  
+win_2022_cis_rule_18_3_1: false

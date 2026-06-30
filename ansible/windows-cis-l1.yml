@@ -1,0 +1,56 @@
+- name: Apply CIS Level 1 Hardening to Windows Server 2022
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: windows_2022_cis
+      vars:
+        win_2022_cis_level_1: true
+        win_2022_cis_level_2: false
+
+  # =========================================================================
+  # CRITICAL CI FIX: Prop the door open for Packer!
+  # These tasks run immediately after the CIS role finishes to ensure 
+  # Packer doesn't get locked out during the windows-restart and sysprep steps.
+  # =========================================================================
+  post_tasks:
+    - name: "CI FIX: Re-enable remote UAC tokens for Packer"
+      win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+        name: LocalAccountTokenFilterPolicy
+        data: 1
+        type: dword
+        state: present
+
+    - name: "CI FIX: Delete Group Policy WinRM registry keys that override Basic auth"
+      # The ansible-lockdown role writes AllowBasic=0 to the GP registry path.
+      # After a restart, Group Policy enforces this and overrides the WSMan:
+      # service config set below. Deleting these keys means Group Policy has
+      # nothing to enforce, so the WSMan: setting takes effect instead.
+      win_regedit:
+        path: "{{ item }}"
+        name: AllowBasic
+        state: absent
+      loop:
+        - HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client
+        - HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service
+
+    - name: "CI FIX: Delete Group Policy unencrypted traffic keys"
+      win_regedit:
+        path: "{{ item }}"
+        name: AllowUnencryptedTraffic
+        state: absent
+      loop:
+        - HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client
+        - HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service
+
+    - name: "CI FIX: Re-enable WinRM Basic Auth via service config for Packer"
+      win_shell: Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+
+    - name: "CI FIX: Temporarily allow NTLM traffic for Packer WinRM session"
+      win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0
+        name: RestrictReceivingNTLMTraffic
+        data: 0
+        type: dword
+        state: present
+      # NOTE: Restored to CIS-required value of 2 by apply-winrm-cis-controls.ps1

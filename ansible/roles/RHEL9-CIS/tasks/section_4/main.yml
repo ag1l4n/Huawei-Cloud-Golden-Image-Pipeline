@@ -1,0 +1,15 @@
+---
+
+- name: "SECTION | 4.1.x | Configure a firewall"
+  ansible.builtin.import_tasks:
+    file: cis_4.1.x.yml
+
+- name: "SECTION | 4.2.x | Configure FirewallD"
+  when: rhel9cis_firewall == "firewalld"
+  ansible.builtin.import_tasks:
+    file: cis_4.2.x.yml
+
+- name: "SECTION | 4.3.x | Configure nftables"
+  when: rhel9cis_firewall == "nftables"
+  ansible.builtin.import_tasks:
+    file: cis_4.3.x.yml

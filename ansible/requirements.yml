@@ -1,0 +1,11 @@
+---
+roles:
+  - name: ubuntu22-cis
+    src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git
+    scm: git
+  - name: windows_2022_cis
+    src: https://github.com/ansible-lockdown/Windows-2022-CIS.git
+    version: main
+  - name: ubuntu24-cis
+    src: https://github.com/ansible-lockdown/UBUNTU24-CIS.git
+    version: main

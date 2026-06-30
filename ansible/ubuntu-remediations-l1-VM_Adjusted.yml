@@ -1,0 +1,86 @@
+---
+- name: Ubuntu 22.04 / 24.04 CIS Level 1 SCAP Remediations (Cloud Safe)
+  hosts: all
+  become: true
+  tasks:
+    # --- 1. SYSTEM NETWORK TUNING (High Impact) ---
+    - name: Hardening V2 - Apply Secure Sysctl Network Configurations
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+        - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+        - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
+        - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
+        - { name: 'net.ipv6.conf.all.accept_ra', value: '0' }
+        - { name: 'net.ipv6.conf.default.accept_ra', value: '0' }
+        - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
+        - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
+
+    # --- 2. SSH DAEMON HARDENING ---
+    - name: Hardening V2 - Secure SSH Settings
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+        validate: /usr/sbin/sshd -t -f %s
+      loop:
+        - { regexp: '^#?LogLevel', line: 'LogLevel VERBOSE' }
+        - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 4' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 3' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+        - { regexp: '^#?LoginGraceTime', line: 'LoginGraceTime 60' }
+        - { regexp: '^#?PermitEmptyPasswords', line: 'PermitEmptyPasswords no' }
+        - { regexp: '^#?PermitUserEnvironment', line: 'PermitUserEnvironment no' }
+        
+    - name: Hardening V2 - Restart SSHD
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted
+
+    # --- 3. FILE & DIRECTORY PERMISSIONS ---
+    - name: Hardening V2 - Restrict Cron Directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+      loop:
+        - /etc/cron.d
+        - /etc/cron.daily
+        - /etc/cron.hourly
+        - /etc/cron.monthly
+        - /etc/cron.weekly
+
+    - name: Hardening V2 - Restrict Crontab
+      ansible.builtin.file:
+        path: /etc/crontab
+        mode: '0600'
+        owner: root
+        group: root
+
+    # --- 4. DISABLE UNUSED FILESYSTEMS (Cloud Safe only) ---
+    - name: Hardening V2 - Disable legacy network protocols
+      ansible.builtin.copy:
+        dest: "/etc/modprobe.d/{{ item }}.conf"
+        content: "install {{ item }} /bin/true\n"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - dccp
+        - sctp
+        - rds
+        - tipc

@@ -1,0 +1,86 @@
+---
+- name: Apply CIS Level 1 Baseline
+  hosts: default
+  become: yes
+  
+  vars:
+    # 1. Enable the Level 1 Baseline
+    ubtu24cis_level_1: true
+    ubtu24cis_level_2: false
+
+    # 2. Azure Provisioning & Cloud-Init Exemptions (CRITICAL FOR BOOT)
+    ubtu24cis_rule_1_1_1_1: false  # cramfs
+    ubtu24cis_rule_1_1_1_2: false  # freevxfs
+    ubtu24cis_rule_1_1_1_3: false  # jffs2
+    ubtu24cis_rule_1_1_1_4: false  # hfs
+    ubtu24cis_rule_1_1_1_5: false  # hfsplus
+    ubtu24cis_rule_1_1_1_6: false  # squashfs (Snap relies on this)
+    ubtu24cis_rule_1_1_1_7: false  # udf (Azure cloud-init relies on this)
+    ubtu24cis_rule_1_1_1_8: false  # fat/vfat (UEFI boot relies on this)
+
+    # 3. Cloud Boot & Grub Exemptions
+    ubtu24cis_rule_1_4_1: false    # Disable GRUB bootloader password requirement
+
+    # 4. Azure Networking Exemption (Let Azure NSG handle the firewall & Wi-Fi)
+    ubtu24cis_setup_firewall: false
+    ubtu24cis_rule_3_1_2: false    # Skip Wi-Fi checks 
+    ubtu24cis_rule_3_4_1_1: false
+    ubtu24cis_rule_3_4_1_2: false
+    ubtu24cis_rule_3_4_1_3: false
+    ubtu24cis_rule_3_4_2_1: false
+    ubtu24cis_rule_3_4_2_2: false
+
+    # 5. Packer Build & Cloud Exemptions (SSH & Passwords)
+    ubtu24cis_rule_5_2_4: false    # Allow passwordless sudo for the packer user
+    ubtu24cis_rule_5_4_2_4: false  # Do not require a root password
+    ubtu24cis_rule_5_2_16: false   # Disable strict SSH idle timeouts
+    ubtu24cis_rule_5_2_17: false   # Disable SSH MaxAuthTries limits 
+    ubtu24cis_rule_5_3_1: false    # Don't break Azure's custom SSH key directories
+    
+    # WHITELIST THE USERS
+    ubtu24cis_sshd_allow_users: "packer  ubuntu sysadmin"
+
+    # 6. Disable AppArmor/Auditd reboots during the pipeline
+    ubtu24cis_reboot_required: false
+    
+  pre_tasks:
+    - name: Wait for cloud-init to finish (prevents apt lock errors)
+      ansible.builtin.raw: cloud-init status --wait
+      changed_when: false
+
+    - name: Update APT package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        
+  roles:
+    - role: ubuntu24-cis
+
+  # THE GOLD STANDARD FIX: Disable internal firewalls so Azure NSG can take over
+  post_tasks:
+    - name: DevSecOps Override - Disable local firewall to allow Azure NSG control
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+        masked: yes
+      loop:
+        - nftables
+        - ufw
+      ignore_errors: true
+
+    - name: Hardening V2 - Secure /tmp using tmpfs (CIS Bypass)
+      ansible.posix.mount:
+        path: /tmp
+        src: tmpfs
+        fstype: tmpfs
+        opts: defaults,rw,nosuid,nodev,noexec,relatime
+        state: present
+
+    - name: Hardening V2 - Secure /dev/shm
+      ansible.posix.mount:
+        path: /dev/shm
+        src: tmpfs
+        fstype: tmpfs
+        opts: defaults,rw,nosuid,nodev,noexec,relatime
+        state: present
