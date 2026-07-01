@@ -211,6 +211,12 @@ jobs:
 
       - name: Deploy Ephemeral VM
         run: |
+
+          hcloud configure set --cli-region="${{ env.HW_LOCATION }}" \
+                     --cli-access-key="secrets.HW_ACCESS_KEY" \
+                     --cli-secret-key="secrets.HW_SECRET_KEY" \
+                     --cli-project-id="secrets.HW_PROJECT_ID"
+
           # ── Resolve IMS image ID with validation ──────────────────────
           IMAGE_NAME="${{ steps.image.outputs.name }}"
           echo "Resolving IMS image ID for: $IMAGE_NAME"
