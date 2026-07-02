@@ -240,8 +240,8 @@ jobs:
             --server.flavorRef="c6.large.2" \
             --server.imageRef="$HW_IMAGE_ID" \
             --server.vpcid="${{ secrets.HW_VPC_ID }}" \
-            --server.nics.0.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
-            --server.security_groups.0.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
+            --server.nics.1.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
+            --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
             --server.root_volume.volumetype="SAS" \
             --server.root_volume.size=40 \
             --server.publicip.eip.iptype="5_bgp" \
