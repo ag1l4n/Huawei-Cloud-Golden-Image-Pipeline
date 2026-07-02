@@ -273,14 +273,15 @@ jobs:
           echo "Job submitted: $HW_JOB_ID. Waiting for completion..."
 
           for i in {1..30}; do
-            JOB_OUTPUT=$(cae ECS GetJob \
+            JOB_OUTPUT=$(cae ECS ShowJob \
               --cli-region="${{ env.HW_LOCATION }}" \
               --cli-warning=false \
               --cli-output=json \
-              --jobid="$HW_JOB_ID" 2>/dev/null)
+              --job_id="$HW_JOB_ID" \
+              2>/dev/null)
 
             if [[ "$i" -eq 1 ]]; then
-              echo "--- Raw GetJob response (attempt 1) ---"
+              echo "--- Raw ShowJob response (attempt 1) ---"
               echo "$JOB_OUTPUT"
             fi
 
@@ -293,8 +294,8 @@ jobs:
               echo "$JOB_OUTPUT"
               exit 1
             fi
-            sleep 10
 
+            sleep 10
             if [[ "$i" -eq 30 ]]; then
               echo "ERROR: Timed out waiting for VM creation."
               exit 1
