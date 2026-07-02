@@ -216,7 +216,8 @@ jobs:
 
           cae IMS ListImages \
             --cli-region="${{ env.HW_LOCATION }}" \
-            > /tmp/ims_list_output.json 2>&1 || true
+            --cli-warning=false \
+            > /tmp/ims_list_output.json 2>/dev/null || true
 
           HW_IMAGE_ID=$(jq -r --arg name "$IMAGE_NAME" \
             '.images[] | select(.name == $name) | .id // empty' \
@@ -224,18 +225,19 @@ jobs:
 
           if [[ -z "$HW_IMAGE_ID" ]]; then
             echo "ERROR: No image found with name '$IMAGE_NAME'"
+            jq -r '.images[] | "\(.name) (\(.id))"' /tmp/ims_list_output.json || true
             exit 1
           fi
 
+          echo "Resolved: $IMAGE_NAME → $HW_IMAGE_ID"
           echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
-          EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
 
-          # Prepare and encode User Data (Base64 is required by the API)
+          EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
           ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
 
-          # Execute CreateServers
           cae ECS CreateServers \
             --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
             --server.name="$EPHEMERAL_NAME" \
             --server.flavorRef="c6.large.2" \
             --server.imageRef="$HW_IMAGE_ID" \
@@ -250,32 +252,35 @@ jobs:
             --server.publicip.eip.bandwidth.chargemode="traffic" \
             --server.publicip.delete_on_termination="true" \
             --server.user_data="$ENCODED_USER_DATA" \
-            > create_server_output.json 2>&1  # Redirect stderr to file to catch API errors
+            > create_server_output.json 2>&1
 
-          # DEBUG: Print the content to the log so we can see the real error
-          echo "--- Raw API Response ---"
+          echo "--- Raw CreateServers response ---"
           cat create_server_output.json
 
-          # Validate JSON and extract
           if ! jq -e '.job_id' create_server_output.json > /dev/null 2>&1; then
-            echo "ERROR: API call failed or response is not JSON."
+            echo "ERROR: CreateServers API call failed."
             exit 1
           fi
+
+          # ── Write server ID and name to GITHUB_ENV immediately ──────────────
+          # Do this before polling so teardown can clean up even if polling fails
+          HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
+          echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
+          echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
+          echo "Server ID saved for teardown: $HW_SERVER_ID"
 
           HW_JOB_ID=$(jq -r '.job_id' create_server_output.json)
           echo "Job submitted: $HW_JOB_ID. Waiting for completion..."
 
-          # Polling logic
           for i in {1..30}; do
             JOB_OUTPUT=$(cae ECS GetJob \
               --cli-region="${{ env.HW_LOCATION }}" \
-              --jobid="$HW_JOB_ID" \
               --cli-warning=false \
-              2>/dev/null)
+              --cli-output=json \
+              --jobid="$HW_JOB_ID" 2>/dev/null)
 
-            # DEBUG: print raw output on first attempt to verify structure
             if [[ "$i" -eq 1 ]]; then
-              echo "--- Raw GetJob response ---"
+              echo "--- Raw GetJob response (attempt 1) ---"
               echo "$JOB_OUTPUT"
             fi
 
@@ -284,7 +289,7 @@ jobs:
 
             if [[ "$STATUS" == "SUCCESS" ]]; then break; fi
             if [[ "$STATUS" == "FAIL" ]]; then
-              echo "ERROR: ECS Creation job failed."
+              echo "ERROR: ECS CreateServers job failed."
               echo "$JOB_OUTPUT"
               exit 1
             fi
@@ -296,19 +301,17 @@ jobs:
             fi
           done
 
-          HW_SERVER_ID=$(cae ECS ListServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            | jq -r --arg name "$EPHEMERAL_NAME" \
-            '.servers[] | select(.name == $name) | .id // empty' | head -1)
-
           VM_IP=$(cae ECS ListServers \
             --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --cli-output=json \
+            2>/dev/null \
             | jq -r --arg id "$HW_SERVER_ID" \
-            '.servers[] | select(.id == $id) | .addresses | to_entries[0].value[0].addr // empty' | head -1)
+            '.servers[] | select(.id == $id) | .addresses | to_entries[0].value[0].addr // empty' \
+            | head -1)
 
           echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
-          echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
+          echo "Ephemeral VM ready at: $VM_IP"
 
       # ──────────────────────────────────────────────────────────────────────
       # WAIT FOR SSH
