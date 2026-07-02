@@ -211,17 +211,9 @@ jobs:
 
       - name: Deploy Ephemeral VM
         run: |
-
-          cae configure set --cli-region="${{ env.HW_LOCATION }}" \
-                     --cli-access-key="$HW_ACCESS_KEY" \
-                     --cli-secret-key="$HW_SECRET_KEY" \
-                     --cli-project-id="$HW_PROJECT_ID"
-
-          # ── Resolve IMS image ID with validation ──────────────────────
           IMAGE_NAME="${{ steps.image.outputs.name }}"
           echo "Resolving IMS image ID for: $IMAGE_NAME"
 
-          # Default output is already JSON — no --output flag needed
           cae IMS ListImages \
             --cli-region="${{ env.HW_LOCATION }}" \
             > /tmp/ims_list_output.json 2>&1 || true
@@ -240,7 +232,6 @@ jobs:
 
           if [[ -z "$HW_IMAGE_ID" ]]; then
             echo "ERROR: No image found with name '$IMAGE_NAME'"
-            echo "--- Available images ---"
             jq -r '.images[] | "\(.name) (\(.id))"' /tmp/ims_list_output.json || true
             exit 1
           fi
@@ -248,13 +239,15 @@ jobs:
           echo "Resolved: $IMAGE_NAME → $HW_IMAGE_ID"
           echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
 
-          echo "--- Deploying Ephemeral Scanning Instance ---"
           EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
 
-          cae ECS CreateServer \
+          # NOTE: 'CreateServer' does not exist — correct operation is 'CreateServers'
+          # WARNING: --server.flavorRef vs --server.flavor — verify with `cae ECS CreateServers --help`
+          # WARNING: response structure may differ from CreateServer — job_id path below needs verification
+          cae ECS CreateServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --server.name="$EPHEMERAL_NAME" \
-            --server.flavor="c6.large.2" \
+            --server.flavorRef="c6.large.2" \
             --server.imageRef="$HW_IMAGE_ID" \
             --server.vpcid="${{ secrets.HW_VPC_ID }}" \
             --server.nics.0.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
@@ -269,12 +262,25 @@ jobs:
             > create_server_output.json
 
           if ! jq empty create_server_output.json 2>/dev/null; then
-            echo "ERROR: cae ECS CreateServer did not return valid JSON. Dumping output:"
+            echo "ERROR: cae ECS CreateServers did not return valid JSON. Dumping output:"
             cat create_server_output.json
             exit 1
           fi
 
-          HW_JOB_ID=$(jq -r '.job_id' create_server_output.json)
+          echo "--- Raw CreateServers output (check job_id path) ---"
+          cat create_server_output.json
+
+          # WARNING: verify .job_id is the correct path in CreateServers response
+          # It may be .serverIds[0] or nested differently — check the raw output above
+          HW_JOB_ID=$(jq -r '.job_id // empty' create_server_output.json)
+
+          if [[ -z "$HW_JOB_ID" ]]; then
+            echo "ERROR: Could not extract job_id from CreateServers response."
+            echo "Full response:"
+            cat create_server_output.json
+            exit 1
+          fi
+
           echo "Waiting for VM creation job $HW_JOB_ID to complete..."
 
           for i in {1..30}; do
@@ -285,7 +291,7 @@ jobs:
             echo "Job status: $STATUS (attempt $i/30)"
             if [[ "$STATUS" == "SUCCESS" ]]; then break; fi
             if [[ "$STATUS" == "FAIL" ]]; then
-              echo "ERROR: ECS CreateServer job failed."
+              echo "ERROR: ECS CreateServers job failed."
               exit 1
             fi
             sleep 10
