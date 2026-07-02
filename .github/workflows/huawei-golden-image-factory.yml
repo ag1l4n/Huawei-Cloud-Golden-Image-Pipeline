@@ -210,111 +210,85 @@ jobs:
           cat /tmp/hw_scan_userdata.sh
 
       - name: Deploy Ephemeral VM
-        run: |
-          IMAGE_NAME="${{ steps.image.outputs.name }}"
-          echo "Resolving IMS image ID for: $IMAGE_NAME"
+            run: |
+              IMAGE_NAME="${{ steps.image.outputs.name }}"
+              echo "Resolving IMS image ID for: $IMAGE_NAME"
 
-          cae IMS ListImages \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            > /tmp/ims_list_output.json 2>&1 || true
+              cae IMS ListImages \
+                --cli-region="${{ env.HW_LOCATION }}" \
+                > /tmp/ims_list_output.json 2>&1 || true
 
-          echo "--- Raw cae IMS ListImages output ---"
-          cat /tmp/ims_list_output.json
+              HW_IMAGE_ID=$(jq -r --arg name "$IMAGE_NAME" \
+                '.images[] | select(.name == $name) | .id // empty' \
+                /tmp/ims_list_output.json | head -1)
 
-          if ! jq empty /tmp/ims_list_output.json 2>/dev/null; then
-            echo "ERROR: cae IMS ListImages did not return valid JSON."
-            exit 1
-          fi
+              if [[ -z "$HW_IMAGE_ID" ]]; then
+                echo "ERROR: No image found with name '$IMAGE_NAME'"
+                exit 1
+              fi
 
-          HW_IMAGE_ID=$(jq -r --arg name "$IMAGE_NAME" \
-            '.images[] | select(.name == $name) | .id // empty' \
-            /tmp/ims_list_output.json | head -1)
+              echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
+              EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
 
-          if [[ -z "$HW_IMAGE_ID" ]]; then
-            echo "ERROR: No image found with name '$IMAGE_NAME'"
-            jq -r '.images[] | "\(.name) (\(.id))"' /tmp/ims_list_output.json || true
-            exit 1
-          fi
+              # Prepare and encode User Data (Base64 is required by the API)
+              ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
 
-          echo "Resolved: $IMAGE_NAME → $HW_IMAGE_ID"
-          echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
+              # Execute CreateServers
+              cae ECS CreateServers \
+                --cli-region="${{ env.HW_LOCATION }}" \
+                --server.name="$EPHEMERAL_NAME" \
+                --server.flavorRef="c6.large.2" \
+                --server.imageRef="$HW_IMAGE_ID" \
+                --server.vpcid="${{ secrets.HW_VPC_ID }}" \
+                --server.nics.0.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
+                --server.security_groups.0.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
+                --server.root_volume.volumetype="SAS" \
+                --server.root_volume.size=40 \
+                --server.publicip.eip.iptype="5_bgp" \
+                --server.publicip.eip.bandwidth.size=5 \
+                --server.publicip.eip.bandwidth.sharetype="PER" \
+                --server.publicip.eip.bandwidth.chargemode="traffic" \
+                --server.publicip.delete_on_termination="true" \
+                --server.user_data="$ENCODED_USER_DATA" \
+                > create_server_output.json
 
-          EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
+              # Check for success and extract Job ID
+              if ! jq -e '.job_id' create_server_output.json > /dev/null 2>&1; then
+                echo "ERROR: CreateServers failed or returned invalid response."
+                cat create_server_output.json
+                exit 1
+              fi
 
-          # NOTE: 'CreateServer' does not exist — correct operation is 'CreateServers'
-          # WARNING: --server.flavorRef vs --server.flavor — verify with `cae ECS CreateServers --help`
-          # WARNING: response structure may differ from CreateServer — job_id path below needs verification
-          cae ECS CreateServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --server.name="$EPHEMERAL_NAME" \
-            --server.flavorRef="c6.large.2" \
-            --server.imageRef="$HW_IMAGE_ID" \
-            --server.vpcid="${{ secrets.HW_VPC_ID }}" \
-            --server.nics.0.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
-            --server.security_groups.0.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
-            --server.root_volume.volumetype="SAS" \
-            --server.root_volume.size=40 \
-            --server.publicip.eip.iptype="5_bgp" \
-            --server.publicip.eip.bandwidth.size=5 \
-            --server.publicip.eip.bandwidth.sharetype="PER" \
-            --server.publicip.eip.bandwidth.chargemode="traffic" \
-            --server.publicip.delete_on_termination="true" \
-            --server.user_data_file="/tmp/hw_scan_userdata.sh" \
-            > create_server_output.json
+              HW_JOB_ID=$(jq -r '.job_id' create_server_output.json)
+              echo "Job submitted: $HW_JOB_ID. Waiting for completion..."
 
-          if ! jq empty create_server_output.json 2>/dev/null; then
-            echo "ERROR: cae ECS CreateServers did not return valid JSON. Dumping output:"
-            cat create_server_output.json
-            exit 1
-          fi
+              # Polling logic
+              for i in {1..30}; do
+                JOB_OUTPUT=$(cae ECS GetJob --cli-region="${{ env.HW_LOCATION }}" --jobid="$HW_JOB_ID")
+                STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status')
+                echo "Job status: $STATUS (attempt $i/30)"
+                
+                if [[ "$STATUS" == "SUCCESS" ]]; then break; fi
+                if [[ "$STATUS" == "FAIL" ]]; then
+                  echo "ERROR: ECS Creation job failed."
+                  exit 1
+                fi
+                sleep 10
+              done
 
-          echo "--- Raw CreateServers output (check job_id path) ---"
-          cat create_server_output.json
+              HW_SERVER_ID=$(cae ECS ListServers \
+                --cli-region="${{ env.HW_LOCATION }}" \
+                | jq -r --arg name "$EPHEMERAL_NAME" \
+                '.servers[] | select(.name == $name) | .id // empty' | head -1)
 
-          # WARNING: verify .job_id is the correct path in CreateServers response
-          # It may be .serverIds[0] or nested differently — check the raw output above
-          HW_JOB_ID=$(jq -r '.job_id // empty' create_server_output.json)
+              VM_IP=$(cae ECS ListServers \
+                --cli-region="${{ env.HW_LOCATION }}" \
+                | jq -r --arg id "$HW_SERVER_ID" \
+                '.servers[] | select(.id == $id) | .addresses | to_entries[0].value[0].addr // empty' | head -1)
 
-          if [[ -z "$HW_JOB_ID" ]]; then
-            echo "ERROR: Could not extract job_id from CreateServers response."
-            echo "Full response:"
-            cat create_server_output.json
-            exit 1
-          fi
-
-          echo "Waiting for VM creation job $HW_JOB_ID to complete..."
-
-          for i in {1..30}; do
-            JOB_OUTPUT=$(cae ECS GetJob \
-              --cli-region="${{ env.HW_LOCATION }}" \
-              --jobid="$HW_JOB_ID")
-            STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status')
-            echo "Job status: $STATUS (attempt $i/30)"
-            if [[ "$STATUS" == "SUCCESS" ]]; then break; fi
-            if [[ "$STATUS" == "FAIL" ]]; then
-              echo "ERROR: ECS CreateServers job failed."
-              exit 1
-            fi
-            sleep 10
-            if [[ "$i" -eq 30 ]]; then
-              echo "ERROR: Timed out waiting for VM creation."
-              exit 1
-            fi
-          done
-
-          HW_SERVER_ID=$(cae ECS ListServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            | jq -r --arg name "$EPHEMERAL_NAME" \
-            '.servers[] | select(.name == $name) | .id // empty' | head -1)
-
-          VM_IP=$(cae ECS ListServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            | jq -r --arg id "$HW_SERVER_ID" \
-            '.servers[] | select(.id == $id) | .addresses | to_entries[0].value[0].addr // empty' | head -1)
-
-          echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
-          echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
+              echo "VM_IP=$VM_IP" >> $GITHUB_ENV
+              echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
+              echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
 
       # ──────────────────────────────────────────────────────────────────────
       # WAIT FOR SSH
