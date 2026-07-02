@@ -400,12 +400,10 @@ jobs:
         run: |
           cae ECS DeleteServers \
             --cli-region="${{ env.HW_LOCATION }}" \
-            --servers.0.id="$HW_SERVER_ID" \
-            --delete_volume=true || true
-
-          cae ECS NovaDeleteKeypair \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --keypair_name="scanner-key-${{ github.run_number }}" || true
+            --cli-warning=false \
+            --servers.1.id="$HW_SERVER_ID" \
+            --delete_volume=true
+          echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
       - name: Upload Report Artifact
         if: always()
