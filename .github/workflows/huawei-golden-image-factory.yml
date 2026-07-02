@@ -250,12 +250,15 @@ jobs:
             --server.publicip.eip.bandwidth.chargemode="traffic" \
             --server.publicip.delete_on_termination="true" \
             --server.user_data="$ENCODED_USER_DATA" \
-            > create_server_output.json
+            > create_server_output.json 2>&1  # Redirect stderr to file to catch API errors
 
-          # Check for success and extract Job ID
+          # DEBUG: Print the content to the log so we can see the real error
+          echo "--- Raw API Response ---"
+          cat create_server_output.json
+
+          # Validate JSON and extract
           if ! jq -e '.job_id' create_server_output.json > /dev/null 2>&1; then
-            echo "ERROR: CreateServers failed or returned invalid response."
-            cat create_server_output.json
+            echo "ERROR: API call failed or response is not JSON."
             exit 1
           fi
 
