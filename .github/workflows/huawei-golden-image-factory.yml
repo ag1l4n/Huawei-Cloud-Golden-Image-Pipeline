@@ -155,7 +155,7 @@ jobs:
 
       - name: Configure Huawei Cloud CLI
         run: |
-          echo "y" | hcloud configure set \
+          echo "y" | cae configure set \
             --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
             --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
             --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
@@ -212,7 +212,7 @@ jobs:
       - name: Deploy Ephemeral VM
         run: |
 
-          hcloud configure set --cli-region="${{ env.HW_LOCATION }}" \
+          cae configure set --cli-region="${{ env.HW_LOCATION }}" \
                      --cli-access-key="$HW_ACCESS_KEY" \
                      --cli-secret-key="$HW_SECRET_KEY" \
                      --cli-project-id="$HW_PROJECT_ID"
@@ -222,15 +222,15 @@ jobs:
           echo "Resolving IMS image ID for: $IMAGE_NAME"
 
           # Default output is already JSON — no --output flag needed
-          hcloud IMS ListImages \
+          cae IMS ListImages \
             --cli-region="${{ env.HW_LOCATION }}" \
             > /tmp/ims_list_output.json 2>&1 || true
 
-          echo "--- Raw hcloud IMS ListImages output ---"
+          echo "--- Raw cae IMS ListImages output ---"
           cat /tmp/ims_list_output.json
 
           if ! jq empty /tmp/ims_list_output.json 2>/dev/null; then
-            echo "ERROR: hcloud IMS ListImages did not return valid JSON."
+            echo "ERROR: cae IMS ListImages did not return valid JSON."
             exit 1
           fi
 
@@ -251,7 +251,7 @@ jobs:
           echo "--- Deploying Ephemeral Scanning Instance ---"
           EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
 
-          hcloud ECS CreateServer \
+          cae ECS CreateServer \
             --cli-region="${{ env.HW_LOCATION }}" \
             --server.name="$EPHEMERAL_NAME" \
             --server.flavor="c6.large.2" \
@@ -269,7 +269,7 @@ jobs:
             > create_server_output.json
 
           if ! jq empty create_server_output.json 2>/dev/null; then
-            echo "ERROR: hcloud ECS CreateServer did not return valid JSON. Dumping output:"
+            echo "ERROR: cae ECS CreateServer did not return valid JSON. Dumping output:"
             cat create_server_output.json
             exit 1
           fi
@@ -278,7 +278,7 @@ jobs:
           echo "Waiting for VM creation job $HW_JOB_ID to complete..."
 
           for i in {1..30}; do
-            JOB_OUTPUT=$(hcloud ECS GetJob \
+            JOB_OUTPUT=$(cae ECS GetJob \
               --cli-region="${{ env.HW_LOCATION }}" \
               --jobid="$HW_JOB_ID")
             STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status')
@@ -295,12 +295,12 @@ jobs:
             fi
           done
 
-          HW_SERVER_ID=$(hcloud ECS ListServers \
+          HW_SERVER_ID=$(cae ECS ListServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             | jq -r --arg name "$EPHEMERAL_NAME" \
             '.servers[] | select(.name == $name) | .id // empty' | head -1)
 
-          VM_IP=$(hcloud ECS ListServers \
+          VM_IP=$(cae ECS ListServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             | jq -r --arg id "$HW_SERVER_ID" \
             '.servers[] | select(.id == $id) | .addresses | to_entries[0].value[0].addr // empty' | head -1)
@@ -385,12 +385,12 @@ jobs:
       - name: Destroy Ephemeral VM (Huawei)
         if: always() && env.HW_SERVER_ID != ''
         run: |
-          hcloud ECS DeleteServers \
+          cae ECS DeleteServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --servers.0.id="$HW_SERVER_ID" \
             --delete_volume=true || true
 
-          hcloud ECS NovaDeleteKeypair \
+          cae ECS NovaDeleteKeypair \
             --cli-region="${{ env.HW_LOCATION }}" \
             --keypair_name="scanner-key-${{ github.run_number }}" || true
 
