@@ -267,16 +267,33 @@ jobs:
 
           # Polling logic
           for i in {1..30}; do
-            JOB_OUTPUT=$(cae ECS GetJob --cli-region="${{ env.HW_LOCATION }}" --jobid="$HW_JOB_ID")
-            STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status')
+            JOB_OUTPUT=$(cae ECS GetJob \
+              --cli-region="${{ env.HW_LOCATION }}" \
+              --jobid="$HW_JOB_ID" \
+              --cli-warning=false \
+              2>/dev/null)
+
+            # DEBUG: print raw output on first attempt to verify structure
+            if [[ "$i" -eq 1 ]]; then
+              echo "--- Raw GetJob response ---"
+              echo "$JOB_OUTPUT"
+            fi
+
+            STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status // empty' 2>/dev/null)
             echo "Job status: $STATUS (attempt $i/30)"
-            
+
             if [[ "$STATUS" == "SUCCESS" ]]; then break; fi
             if [[ "$STATUS" == "FAIL" ]]; then
               echo "ERROR: ECS Creation job failed."
+              echo "$JOB_OUTPUT"
               exit 1
             fi
             sleep 10
+
+            if [[ "$i" -eq 30 ]]; then
+              echo "ERROR: Timed out waiting for VM creation."
+              exit 1
+            fi
           done
 
           HW_SERVER_ID=$(cae ECS ListServers \
