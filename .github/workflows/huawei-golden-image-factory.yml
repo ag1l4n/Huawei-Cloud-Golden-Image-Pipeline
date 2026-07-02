@@ -288,7 +288,10 @@ jobs:
             STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status // empty' 2>/dev/null)
             echo "Job status: $STATUS (attempt $i/30)"
 
-            if [[ "$STATUS" == "SUCCESS" ]]; then break; fi
+            if [[ "$STATUS" == "SUCCESS" ]]; then 
+              echo "VM is ACTIVE. Waiting 30s for cloud-init to complete..."
+              sleep 30
+              break; fi
             if [[ "$STATUS" == "FAIL" ]]; then
               echo "ERROR: ECS CreateServers job failed."
               echo "$JOB_OUTPUT"
@@ -302,17 +305,22 @@ jobs:
             fi
           done
 
-          VM_IP=$(cae ECS ListServers \
+          cae ECS ShowServer \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
             --cli-output=json \
-            2>/dev/null \
-            | jq -r --arg id "$HW_SERVER_ID" \
-            '.servers[] | select(.id == $id) | .addresses | to_entries[0].value[0].addr // empty' \
-            | head -1)
+            --project_id="${{ secrets.HW_PROJECT_ID }}" \
+            --server_id="$HW_SERVER_ID" \
+            > /tmp/show_server_output.json 2>/dev/null
+
+          echo "--- Raw ShowServer response ---"
+          cat /tmp/show_server_output.json
+
+          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[0].addr // empty' \
+            /tmp/show_server_output.json)
 
           echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "Ephemeral VM ready at: $VM_IP"
+          echo "Ephemeral VM IP: $VM_IP"
 
       # ──────────────────────────────────────────────────────────────────────
       # WAIT FOR SSH
