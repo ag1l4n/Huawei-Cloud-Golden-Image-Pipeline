@@ -257,7 +257,8 @@ jobs:
             --server.publicip.eip.iptype="5_bgp" \
             --server.publicip.eip.bandwidth.size=5 \
             --server.publicip.eip.bandwidth.sharetype="PER" \
-            --server.publicip.eip.bandwidth.charging_mode="traffic" \
+            --server.publicip.eip.bandwidth.chargemode="traffic" \
+            --server.publicip.delete_on_termination="true" \
             --server.user_data_file="/tmp/hw_scan_userdata.sh" \
             > create_server_output.json
 
