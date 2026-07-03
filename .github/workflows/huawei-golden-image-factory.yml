@@ -372,12 +372,12 @@ jobs:
               sysadmin@${{ env.VM_IP }} << 'EOF'
             sudo apt-get update -qq
             sudo apt-get install -y openscap-scanner unzip wget
-            wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.75/scap-security-guide-0.1.75.zip
-            unzip -q scap-security-guide-0.1.75.zip
+            wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.81/scap-security-guide-0.1.81.zip
+            unzip -q scap-security-guide-0.1.81.zip
             sudo oscap xccdf eval \
               --profile xccdf_org.ssgproject.content_profile_cis_level1_server \
               --report /tmp/hw-ubuntu-2404-cis-report.html \
-              scap-security-guide-0.1.75/ssg-ubuntu2404-ds.xml || true
+              scap-security-guide-0.1.81/ssg-ubuntu2404-ds.xml || true
             sudo cp /tmp/hw-ubuntu-2404-cis-report.html /home/sysadmin/
             sudo chown sysadmin:sysadmin /home/sysadmin/hw-ubuntu-2404-cis-report.html
           EOF
