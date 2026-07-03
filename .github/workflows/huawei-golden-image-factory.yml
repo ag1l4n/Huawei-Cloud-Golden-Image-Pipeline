@@ -371,7 +371,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
               sysadmin@${{ env.VM_IP }} << 'EOF'
             sudo apt-get update -qq
-            sudo apt-get install -y libopenscap8 unzip wget
+            sudo apt-get install -y openscap-scanner unzip wget
             wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.75/scap-security-guide-0.1.75.zip
             unzip -q scap-security-guide-0.1.75.zip
             sudo oscap xccdf eval \
