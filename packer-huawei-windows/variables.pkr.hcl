@@ -36,9 +36,10 @@ variable "image_version" {
   default     = "1.0.0"
 }
 
-variable "winrm_password" {
+variable "local_admin_password" {
   type        = string
   description = "Temporary Administrator password for WinRM connection"
-  default     = "HwCloud!WinBuild2026#"
   sensitive   = true
+  # You can provide a default fallback here, or rely strictly on the pipeline secret
+  default     = "HwCloud!WinBuild2026#" 
 }
