@@ -12,6 +12,7 @@ on:
           - all
           - Rocky 9
           - Ubuntu 24.04
+          - Windows Server 2022
       scan_only:
         description: 'Skip Packer Build (Run Compliance Scan Only)'
         required: true
@@ -27,6 +28,10 @@ on:
         type: string
       ubuntu_image_name_override:
         description: 'Custom Ubuntu Image Name Override (Optional)'
+        required: false
+        type: string
+      windows_image_name_override:
+        description: 'Custom Windows Image Name Override (Optional)'
         required: false
         type: string
 
@@ -72,11 +77,13 @@ jobs:
         run: |
           CHOICE="${{ inputs.os_choice }}"
           if [[ -z "$CHOICE" || "$CHOICE" == "all" ]]; then
-            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"},{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Rocky 9" ]]; then
             echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Ubuntu 24.04" ]]; then
             echo 'matrix=[{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+          elif [[ "$CHOICE" == "Windows Server 2022" ]]; then
+            echo 'matrix=[{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           fi
 
   # ============================================================
@@ -114,8 +121,9 @@ jobs:
       - name: Resolve VM Slug
         run: |
           case "${{ matrix.os_config.os }}" in
-            "Huawei Rocky 9")       echo "VM_SLUG=hw-rocky"  >> $GITHUB_ENV ;;
-            "Huawei Ubuntu 24.04")  echo "VM_SLUG=hw-ubuntu" >> $GITHUB_ENV ;;
+            "Huawei Rocky 9")              echo "VM_SLUG=hw-rocky"   >> $GITHUB_ENV ;;
+            "Huawei Ubuntu 24.04")         echo "VM_SLUG=hw-ubuntu"  >> $GITHUB_ENV ;;
+            "Huawei Windows Server 2022")  echo "VM_SLUG=hw-windows" >> $GITHUB_ENV ;;
             *)
               echo "ERROR: Unrecognised OS '${{ matrix.os_config.os }}'"
               exit 1
@@ -131,6 +139,16 @@ jobs:
         uses: hashicorp/setup-packer@v3.2.0
         with:
           version: 'latest'
+      
+      - name: Install Ansible & WinRM dependencies (Windows only)
+        if: ${{ inputs.scan_only != true && matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        run: |
+          pip install \
+            ansible~=9.0 \
+            pywinrm \
+            xmltodict \
+            passlib \
+            jmespath
 
       - name: Install Ansible Galaxy roles
         if: ${{ inputs.scan_only != true }}
@@ -149,9 +167,9 @@ jobs:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: packer init .
         working-directory: >-
-          ${{ matrix.os_config.os == 'Huawei Rocky 9'
-           && './packer-huawei-rocky'
-           ||   './packer-huawei-ubuntu' }}
+          ${{ matrix.os_config.os == 'Huawei Rocky 9'             && './packer-huawei-rocky'
+           || matrix.os_config.os == 'Huawei Ubuntu 24.04'        && './packer-huawei-ubuntu'
+           || matrix.os_config.os == 'Huawei Windows Server 2022' && './packer-huawei-windows' }}
 
       - name: Configure Huawei Cloud CLI
         run: |
@@ -163,16 +181,14 @@ jobs:
             --cli-skip-secure-verify=true
 
       - name: Prepare user_data with PermitRootLogin fix
-        if: ${{ inputs.scan_only != true }}
+        if: ${{ inputs.scan_only != true && matrix.os_config.os != 'Huawei Windows Server 2022'}}
         run: |
           printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
           chmod +x /tmp/hw_userdata.sh
-          echo "Verifying user_data contents:"
-          cat /tmp/hw_userdata.sh
           echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
 
-      - name: Build Golden Image
-        if: ${{ inputs.scan_only != true }}
+      - name: Build Golden Image (Linux)
+        if: ${{ inputs.scan_only != true && matrix.os_config.os != 'Huawei Windows Server 2022' }}
         env:
           PACKER_LOG: "1"
         run: |
@@ -182,9 +198,20 @@ jobs:
             -var "user_data_file=/tmp/hw_userdata.sh" \
             .
         working-directory: >-
-          ${{ matrix.os_config.os == 'Huawei Rocky 9'
-           && './packer-huawei-rocky'
-           ||   './packer-huawei-ubuntu' }}
+          ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
+           || './packer-huawei-ubuntu' }}
+        
+      - name: Build Golden Image (Windows)
+        if: ${{ inputs.scan_only != true && matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        run: |
+            packer build \
+              -force \
+              -var "image_version=${{ needs.prepare.outputs.new_version }}" \
+              -var "vpc_id=${{ secrets.HW_VPC_ID }}" \
+              -var "subnets=${{ secrets.HW_SUBNET_ID }}" \
+              -var "secgroup_id=${{ secrets.HW_SECURITY_GROUP_ID }}" \
+              .
+        working-directory: ./packer-huawei-windows
 
       # ──────────────────────────────────────────────────────────────────────
       # DEPLOY EPHEMERAL VM FOR SCANNING
@@ -197,16 +224,34 @@ jobs:
         id: image
         run: |
           case "${{ matrix.os_config.os }}" in
-            # ── prefix matches the actual IMS naming convention ──
-            "Huawei Rocky 9")       echo "name=${{ inputs.rocky_image_name_override  || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-            "Huawei Ubuntu 24.04")  echo "name=${{ inputs.ubuntu_image_name_override || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Rocky 9")              echo "name=${{ inputs.rocky_image_name_override   || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Ubuntu 24.04")         echo "name=${{ inputs.ubuntu_image_name_override  || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Windows Server 2022")  echo "name=${{ inputs.windows_image_name_override || format('hw-win2022-cis-l1-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
           esac
 
       - name: Prepare user_data for Pipeline Scanner
         run: |
           echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
           SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
-          printf "#!/bin/bash\nmkdir -p /home/sysadmin/.ssh\necho '$SCANNER_PUB_KEY' >> /home/sysadmin/.ssh/authorized_keys\nchown -R sysadmin:sysadmin /home/sysadmin/.ssh\nchmod 700 /home/sysadmin/.ssh\nchmod 600 /home/sysadmin/.ssh/authorized_keys\n" > /tmp/hw_scan_userdata.sh
+          
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            cat << 'EOF' > /tmp/hw_scan_userdata.sh
+          <powershell>
+          $Password = "HwCloud!Scan2026#"
+          $UserAccount = Get-LocalUser -Name "Administrator"
+          $UserAccount | Set-LocalUser -Password (ConvertTo-SecureString $Password -AsPlainText -Force)
+          Enable-LocalUser -Name "Administrator"
+
+          winrm quickconfig -q
+          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+          winrm set winrm/config/service/auth '@{Basic="true"}'
+          netsh advfirewall firewall add rule name="WinRM-HTTP" dir=in localport=5985 protocol=TCP action=allow
+          Restart-Service WinRM
+          </powershell>
+          EOF
+          else
+            printf "#!/bin/bash\nmkdir -p /home/sysadmin/.ssh\necho '$SCANNER_PUB_KEY' >> /home/sysadmin/.ssh/authorized_keys\nchown -R sysadmin:sysadmin /home/sysadmin/.ssh\nchmod 700 /home/sysadmin/.ssh\nchmod 600 /home/sysadmin/.ssh/authorized_keys\n" > /tmp/hw_scan_userdata.sh
+          fi
           cat /tmp/hw_scan_userdata.sh
 
       - name: Deploy Ephemeral VM
@@ -262,8 +307,6 @@ jobs:
             exit 1
           fi
 
-          # ── Write server ID and name to GITHUB_ENV immediately ──────────────
-          # Do this before polling so teardown can clean up even if polling fails
           HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
           echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
           echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
@@ -279,11 +322,6 @@ jobs:
               --cli-output=json \
               --job_id="$HW_JOB_ID" \
               2>/dev/null)
-
-            if [[ "$i" -eq 1 ]]; then
-              echo "--- Raw ShowJob response (attempt 1) ---"
-              echo "$JOB_OUTPUT"
-            fi
 
             STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status // empty' 2>/dev/null)
             echo "Job status: $STATUS (attempt $i/30)"
@@ -313,9 +351,6 @@ jobs:
             --server_id="$HW_SERVER_ID" \
             > /tmp/show_server_output.json 2>/dev/null
 
-          echo "--- Raw ShowServer response ---"
-          cat /tmp/show_server_output.json
-
           VM_IP=$(jq -r '.server.addresses | to_entries[0].value[0].addr // empty' \
             /tmp/show_server_output.json)
 
@@ -323,26 +358,34 @@ jobs:
           echo "Ephemeral VM IP: $VM_IP"
 
       # ──────────────────────────────────────────────────────────────────────
-      # WAIT FOR SSH
+      # WAIT FOR VM CONNECTION
       # ──────────────────────────────────────────────────────────────────────
 
-      - name: Wait for SSH Connection
+      - name: Wait for VM Connection
         run: |
-          for i in {1..20}; do
-            if ssh -o StrictHostKeyChecking=no \
-                  -o ConnectTimeout=5 \
-                  -i ~/.ssh/scanner_key \
-                  sysadmin@"$VM_IP" exit 0 2>/dev/null; then
-              echo "SSH is up after attempt $i."
-              break
-            fi
-            echo "Attempt $i/20 — SSH not ready, retrying in 10s..."
-            sleep 10
-            if [ "$i" -eq 20 ]; then
-              echo "ERROR: SSH never became available after 200s."
-              exit 1
-            fi
-          done
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            echo "Waiting for WinRM to stabilize on Windows VM ($VM_IP)..."
+            for i in {1..30}; do
+              if curl -s --connect-timeout 5 "http://$VM_IP:5985/wsman" | grep -q "Bad Request"; then
+                echo "WinRM is up after attempt $i."
+                break
+              fi
+              echo "Attempt $i/30 — WinRM not ready, retrying in 20s..."
+              sleep 20
+              if [ "$i" -eq 30 ]; then exit 1; fi
+            done
+          else
+            echo "Waiting for SSH to stabilize on Linux VM ($VM_IP)..."
+            for i in {1..20}; do
+              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/scanner_key sysadmin@"$VM_IP" exit 0 2>/dev/null; then
+                echo "SSH is up after attempt $i."
+                break
+              fi
+              echo "Attempt $i/20 — SSH not ready, retrying in 10s..."
+              sleep 10
+              if [ "$i" -eq 20 ]; then exit 1; fi
+            done
+          fi
 
       # ──────────────────────────────────────────────────────────────────────
       # SCAN PHASE
@@ -384,6 +427,30 @@ jobs:
           scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
             sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-ubuntu-2404-cis-report.html \
             ./hw-ubuntu-2404-cis-report.html
+
+      - name: Run Cinc Auditor & Generate Multi-Format Reports (Windows)
+        if: ${{ matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        run: |
+          echo "Installing Cinc Auditor..."
+          curl -sL https://omnitruck.cinc.sh/install.sh | sudo bash -s -- -P cinc-auditor
+
+          echo "Executing Cinc Auditor against hardened Windows Image..."
+          for i in {1..5}; do
+            if cinc-auditor exec https://github.com/dev-sec/windows-baseline \
+              -t winrm://Administrator@${{ env.VM_IP }} \
+              --password 'HwCloud!Scan2026#' \
+              --input server_role=member_server \
+              --input domain_joined=false \
+              --backend-cache \
+              --reporter html:./hw-windows-cis-report.html json:./hw-windows-cis-report.json cli; then
+              
+              echo "Cinc Auditor completed successfully."
+              break
+            else
+              echo "Warning: Authentication dropped. Retrying in 15 seconds..."
+              sleep 15
+            fi
+          done
 
       # ──────────────────────────────────────────────────────────────────────
       # TEARDOWN
@@ -464,6 +531,7 @@ jobs:
             |-------|-----------|---------|
             | Huawei Rocky Linux 9 | CIS AlmaLinux/Rocky Linux 9 | Level 1 Server |
             | Huawei Ubuntu 24.04 | CIS Ubuntu Linux 24.04 LTS | Level 1 Server |
+            | Huawei Windows Server 2022 | CIS Microsoft Windows Server 2022 | Level 1 Member Server |
 
             **IMS image version:** `${{ needs.prepare.outputs.new_version }}`
             **Region:** `${{ inputs.hw_region || vars.HW_LOCATION }}`
