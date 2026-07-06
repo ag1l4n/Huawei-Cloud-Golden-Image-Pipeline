@@ -207,9 +207,9 @@ jobs:
             packer build \
               -force \
               -var "image_version=${{ needs.prepare.outputs.new_version }}" \
-              -var "vpc_id=${{ secrets.HW_VPC_ID }}" \
-              -var "subnets=${{ secrets.HW_SUBNET_ID }}" \
-              -var "secgroup_id=${{ secrets.HW_SECURITY_GROUP_ID }}" \
+              -var "hw_vpc_id=${{ secrets.HW_VPC_ID }}" \
+              -var "hw_subnet_id=${{ secrets.HW_SUBNET_ID }}" \
+              -var "hw_security_group_id=${{ secrets.HW_SECURITY_GROUP_ID }}" \
               .
         working-directory: ./packer-huawei-windows
 
