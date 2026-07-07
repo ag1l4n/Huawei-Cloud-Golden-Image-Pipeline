@@ -1,6 +1,8 @@
-name: Huawei Cloud Golden Image Pipeline
+name: Golden Image Factory Pipeline
 
 on:
+  push:
+    branches: [ "main" ]
   workflow_dispatch:
     inputs:
       os_choice:
@@ -10,24 +12,29 @@ on:
         type: choice
         options:
           - all
+          - Ubuntu 22.04
+          - RHEL 9
           - Rocky 9
-          - Ubuntu 24.04
           - Windows Server 2022
       scan_only:
         description: 'Skip Packer Build (Run Compliance Scan Only)'
         required: true
         default: false
         type: boolean
-      hw_region:
-        description: 'Huawei Cloud Region (Leave blank to use default, my-kualalumpur-1)'
-        required: false
-        type: string
-      rocky_image_name_override:
-        description: 'Custom Rocky Image Name Override (Optional)'
+      azure_region:
+        description: 'Deployment Region (Leave blank to use default, southeastasia)'
         required: false
         type: string
       ubuntu_image_name_override:
         description: 'Custom Ubuntu Image Name Override (Optional)'
+        required: false
+        type: string
+      rhel_image_name_override:
+        description: 'Custom RHEL Image Name Override (Optional)'
+        required: false
+        type: string
+      rocky_image_name_override:
+        description: 'Custom Rocky Image Name Override (Optional)'
         required: false
         type: string
       windows_image_name_override:
@@ -60,7 +67,6 @@ jobs:
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          tag_prefix: hw-v
           dry_run: true
           default_bump: patch
 
@@ -77,58 +83,152 @@ jobs:
         run: |
           CHOICE="${{ inputs.os_choice }}"
           if [[ -z "$CHOICE" || "$CHOICE" == "all" ]]; then
-            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"},{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+            echo 'matrix=["Ubuntu 22.04", "RHEL 9", "Rocky 9", "Windows Server 2022"]' >> $GITHUB_OUTPUT
+          elif [[ "$CHOICE" == "Ubuntu 22.04" ]]; then
+            echo 'matrix=["Ubuntu 22.04"]' >> $GITHUB_OUTPUT
+          elif [[ "$CHOICE" == "RHEL 9" ]]; then
+            echo 'matrix=["RHEL 9"]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Rocky 9" ]]; then
-            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
-          elif [[ "$CHOICE" == "Ubuntu 24.04" ]]; then
-            echo 'matrix=[{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+            echo 'matrix=["Rocky 9"]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Windows Server 2022" ]]; then
-            echo 'matrix=[{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+            echo 'matrix=["Windows Server 2022"]' >> $GITHUB_OUTPUT
           fi
 
   # ============================================================
   # STAGE 2: BUILD & SCAN (Parallel Matrix)
   # ============================================================
   matrix-factory:
-    name: Build & Scan (${{ matrix.os_config.os }})
+    name: Build & Scan (${{ matrix.os }})
     needs: prepare
-    runs-on: ${{ matrix.os_config.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os_config: ${{ fromJson(needs.prepare.outputs.matrix_config) }}
+        os: ${{ fromJson(needs.prepare.outputs.matrix_config) }}
 
     env:
-      # ── Huawei Cloud SDK variables (Required for pre-flight auth) ───────
-      HW_ACCESS_KEY:                ${{ secrets.HW_ACCESS_KEY }}
-      HW_SECRET_KEY:                ${{ secrets.HW_SECRET_KEY }}
-      HW_PROJECT_ID:                ${{ secrets.HW_PROJECT_ID }}
-      HW_LOCATION:                  ${{ inputs.hw_region || vars.HW_LOCATION }}
+      AZURE_RG:       ${{ vars.AZURE_RG }}
+      AZURE_GALLERY:  ${{ vars.AZURE_GALLERY }}
+      AZURE_LOCATION: ${{ inputs.azure_region || vars.AZURE_LOCATION }}
+      VM_SIZE:        ${{ vars.VM_SIZE }}
+      WINDOWS_ADMIN_PASS: ${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}
 
-      # ── Huawei Cloud Packer variables (Required for .pkr.hcl) ───────────
-      PKR_VAR_hw_access_key:        ${{ secrets.HW_ACCESS_KEY }}
-      PKR_VAR_hw_secret_key:        ${{ secrets.HW_SECRET_KEY }}
-      PKR_VAR_hw_project_id:        ${{ secrets.HW_PROJECT_ID }}
-      PKR_VAR_hw_region:            ${{ inputs.hw_region || vars.HW_LOCATION }}
-      PKR_VAR_hw_vpc_id:            ${{ secrets.HW_VPC_ID }}
-      PKR_VAR_hw_subnet_id:         ${{ secrets.HW_SUBNET_ID }}
-      PKR_VAR_hw_security_group_id: ${{ secrets.HW_SECURITY_GROUP_ID }}
+      # ── Shared PKR_VAR_* for all OS builds ──────────────────────────────
+      PKR_VAR_resource_group:        ${{ vars.AZURE_RG }}
+      PKR_VAR_gallery_name:          ${{ vars.AZURE_GALLERY }}
+      PKR_VAR_location:              ${{ inputs.azure_region || vars.AZURE_LOCATION }}
+      PKR_VAR_vm_size:               ${{ vars.VM_SIZE }}
+      PKR_VAR_subscription_id:       ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      PKR_VAR_local_admin_username:  sysadmin
+      PKR_VAR_local_admin_password:  ${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}
+
+      # ── Windows-specific: explicit SP credentials for long-running build ─
+      # These are read by windows-cis.pkr.hcl via PKR_VAR_* convention.
+      # Linux builds ignore these because their templates have no matching
+      # variables — Packer silently skips unrecognised PKR_VAR_* values.
+      PKR_VAR_client_id:     ${{ secrets.AZURE_CLIENT_ID }}
+      PKR_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+      PKR_VAR_tenant_id:     ${{ secrets.AZURE_TENANT_ID }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
+      # ── OIDC login — used for all az cli steps throughout this job ───────
+      # For Linux Packer builds, this CLI session is also used by Packer
+      # (use_azure_cli_auth = true in those templates). For Windows, Packer
+      # authenticates independently via PKR_VAR_client_* above, so this
+      # session only needs to be alive for the az cli steps (VM create, NSG,
+      # teardown), not for the multi-hour Packer build itself.
+      - name: Authenticate to Azure
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ── BUG FIX: Resolve a short slug for use in Azure resource names ────
       - name: Resolve VM Slug
         run: |
-          case "${{ matrix.os_config.os }}" in
-            "Huawei Rocky 9")              echo "VM_SLUG=hw-rocky"   >> $GITHUB_ENV ;;
-            "Huawei Ubuntu 24.04")         echo "VM_SLUG=hw-ubuntu"  >> $GITHUB_ENV ;;
-            "Huawei Windows Server 2022")  echo "VM_SLUG=hw-windows" >> $GITHUB_ENV ;;
+          case "${{ matrix.os }}" in
+            "Ubuntu 22.04")        echo "VM_SLUG=ubuntu"  >> $GITHUB_ENV ;;
+            "RHEL 9")              echo "VM_SLUG=rhel"    >> $GITHUB_ENV ;;
+            "Rocky 9")             echo "VM_SLUG=rocky"   >> $GITHUB_ENV ;;
+            "Windows Server 2022") echo "VM_SLUG=windows" >> $GITHUB_ENV ;;
             *)
-              echo "ERROR: Unrecognised OS '${{ matrix.os_config.os }}'"
+              echo "ERROR: Unrecognised OS '${{ matrix.os }}'"
               exit 1
               ;;
           esac
+
+      - name: Pre-Flight Marketplace Terms Acceptance
+        if: ${{ matrix.os == 'RHEL 9' || matrix.os == 'Rocky 9'}}
+        run: |
+          az vm image terms accept --urn resf:rockylinux-x86_64:9-base:latest || true
+          az vm image terms accept --urn RedHat:RHEL:9-lvm:latest || true
+
+      - name: Ensure Compute Gallery Image Definition Exists
+        run: |
+          case "${{ matrix.os }}" in
+            "Ubuntu 22.04")
+              DEF_NAME="ubuntu-nvme-cis"
+              OS_TYPE="Linux"
+              PUBLISHER="Canonical"
+              OFFER="0001-com-ubuntu-server-jammy"
+              SKU="22_04-lts-gen2"
+              ;;
+            "RHEL 9")
+              DEF_NAME="rhel-nvme-cis"
+              OS_TYPE="Linux"
+              PUBLISHER="RedHat"
+              OFFER="RHEL"
+              SKU="9-lvm"
+              ;;
+            "Rocky 9")
+              DEF_NAME="rocky-nvme-cis"
+              OS_TYPE="Linux"
+              PUBLISHER="resf"
+              OFFER="rockylinux-x86_64"
+              SKU="9-base"
+              PLAN_ARGS="--plan-name 9-base --plan-publisher resf --plan-product rockylinux-x86_64"
+              ;;
+            "Windows Server 2022")
+              DEF_NAME="windows-server-2022-cis"
+              OS_TYPE="Windows"
+              PUBLISHER="MicrosoftWindowsServer"
+              OFFER="WindowsServer"
+              SKU="2022-datacenter-g2"
+              ;;
+            *)
+              echo "ERROR: Unrecognised OS '${{ matrix.os }}'"
+              exit 1
+              ;;
+          esac
+
+          EXISTING=$(az sig image-definition show \
+            --resource-group ${{ env.AZURE_RG }} \
+            --gallery-name   ${{ env.AZURE_GALLERY }} \
+            --gallery-image-definition "$DEF_NAME" \
+            --query name -o tsv 2>/dev/null || echo "")
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "Definition '$DEF_NAME' already exists — skipping."
+            exit 0
+          fi
+
+          echo "Creating image definition '$DEF_NAME'..."
+          az sig image-definition create \
+            --resource-group ${{ env.AZURE_RG }} \
+            --gallery-name   ${{ env.AZURE_GALLERY }} \
+            --gallery-image-definition "$DEF_NAME" \
+            --publisher      "$PUBLISHER" \
+            --offer          "$OFFER" \
+            --sku            "$SKU" \
+            --os-type        "$OS_TYPE" \
+            --os-state       Generalized \
+            ${PLAN_ARGS:-}
+
+          echo "Definition '$DEF_NAME' created successfully."
 
       # ──────────────────────────────────────────────────────────────────────
       # PACKER BUILD PHASE
@@ -140,69 +240,80 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Install Ansible & WinRM dependencies (Windows only)
+        if: ${{ inputs.scan_only != true && matrix.os == 'Windows Server 2022' }}
+        run: |
+          pip install \
+            ansible~=9.0 \
+            pywinrm \
+            xmltodict \
+            passlib \
+            jmespath
 
-      - name: Install Ansible Galaxy roles
-        if: ${{ inputs.scan_only != true }}
+      - name: Install Ansible Galaxy roles (Windows Server 2022 only)
+        if: ${{ inputs.scan_only != true && matrix.os == 'Windows Server 2022' }}
         working-directory: ./ansible
         run: |
-          if [ -d "roles/ubuntu24-cis" ]; then
-            echo "Ansible roles already exist. Skipping download."
-          else
-            echo "Roles missing. Installing from requirements.yml..."
-            ansible-galaxy install -r requirements.yml --roles-path roles/
-          fi
+          ansible-galaxy install -r requirements.yml --roles-path roles/
 
       - name: Packer Init
         if: ${{ inputs.scan_only != true }}
-        env:
-          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: packer init .
         working-directory: >-
-          ${{ matrix.os_config.os == 'Huawei Rocky 9'             && './packer-huawei-rocky'
-           || matrix.os_config.os == 'Huawei Ubuntu 24.04'        && './packer-huawei-ubuntu'
-           || matrix.os_config.os == 'Huawei Windows Server 2022' && './packer-huawei-windows' }}
+          ${{ matrix.os == 'Ubuntu 22.04'        && './packer-ubuntu'
+           || matrix.os == 'RHEL 9'              && './packer-rhel'
+           || matrix.os == 'Rocky 9'             && './packer-rocky'
+           ||                                        './packer-windows' }}
 
-      - name: Configure Huawei Cloud CLI
-        run: |
-          echo "y" | cae configure set \
-            --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
-            --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
-            --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-skip-secure-verify=true
+      # ── Re-authenticate immediately before the Windows Packer build ──────
+      # The OIDC token from the login step at the top of this job is valid
+      # for only ~5 minutes. By the time we reach this step for Windows
+      # (after pip install, Galaxy install, packer init), it has expired.
+      # The re-login here refreshes the az cli session used by the az steps
+      # that follow the build (VM deploy, scan, teardown).
+      # Packer itself uses PKR_VAR_client_* and does NOT depend on this
+      # session — this step is purely to keep az cli working post-build.
+      - name: Re-authenticate to Azure (Windows — pre-build refresh)
+        if: ${{ inputs.scan_only != true && matrix.os == 'Windows Server 2022' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Prepare user_data with PermitRootLogin fix
-        if: ${{ inputs.scan_only != true && matrix.os_config.os != 'Huawei Windows Server 2022'}}
-        run: |
-          printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
-          chmod +x /tmp/hw_userdata.sh
-          echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
-
+      # ── Build Golden Image ────────────────────────────────────────────────
+      # Windows: passes explicit SP credentials so Packer authenticates
+      #          independently of the OIDC session (which would expire during
+      #          the 60-90 min build). Also passes the image definition name
+      #          override and the tenant_id which OIDC builds don't need.
+      # Linux:   uses PKR_VAR_* env vars set in the job env block above;
+      #          those templates use use_azure_cli_auth = true and complete
+      #          well within the OIDC token lifetime.
       - name: Build Golden Image (Linux)
-        if: ${{ inputs.scan_only != true && matrix.os_config.os != 'Huawei Windows Server 2022' }}
-        env:
-          PACKER_LOG: "1"
+        if: ${{ inputs.scan_only != true && matrix.os != 'Windows Server 2022' }}
         run: |
           packer build \
             -force \
             -var "image_version=${{ needs.prepare.outputs.new_version }}" \
-            -var "user_data_file=/tmp/hw_userdata.sh" \
             .
         working-directory: >-
-          ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
-           || './packer-huawei-ubuntu' }}
-        
+          ${{ matrix.os == 'Ubuntu 22.04' && './packer-ubuntu'
+           || matrix.os == 'RHEL 9'       && './packer-rhel'
+           ||                                 './packer-rocky' }}
+
       - name: Build Golden Image (Windows)
-        if: ${{ inputs.scan_only != true && matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        if: ${{ inputs.scan_only != true && matrix.os == 'Windows Server 2022' }}
         run: |
-            packer build \
-              -force \
-              -var "image_version=${{ needs.prepare.outputs.new_version }}" \
-              -var "hw_vpc_id=${{ secrets.HW_VPC_ID }}" \
-              -var "hw_subnet_id=${{ secrets.HW_SUBNET_ID }}" \
-              -var "hw_security_group_id=${{ secrets.HW_SECURITY_GROUP_ID }}" \
-              .
-        working-directory: ./packer-huawei-windows
+          packer build \
+            -force \
+            -var "image_version=${{ needs.prepare.outputs.new_version }}" \
+            -var "image_definition_name=${{ inputs.windows_image_name_override || 'windows-server-2022-cis' }}" \
+            -var "client_id=${{ secrets.AZURE_CLIENT_ID }}" \
+            -var "client_secret=${{ secrets.AZURE_CLIENT_SECRET }}" \
+            -var "tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -var "subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            .
+        working-directory: ./packer-windows
 
       # ──────────────────────────────────────────────────────────────────────
       # DEPLOY EPHEMERAL VM FOR SCANNING
@@ -214,226 +325,330 @@ jobs:
       - name: Resolve Target Image Name
         id: image
         run: |
-          case "${{ matrix.os_config.os }}" in
-            "Huawei Rocky 9")              echo "name=${{ inputs.rocky_image_name_override   || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-            "Huawei Ubuntu 24.04")         echo "name=${{ inputs.ubuntu_image_name_override  || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-            "Huawei Windows Server 2022")  echo "name=${{ inputs.windows_image_name_override || format('hw-win2022-cis-l1-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+          case "${{ matrix.os }}" in
+            "Ubuntu 22.04")        echo "name=${{ inputs.ubuntu_image_name_override || 'ubuntu-nvme-cis' }}" >> $GITHUB_OUTPUT ;;
+            "RHEL 9")              echo "name=${{ inputs.rhel_image_name_override   || 'rhel-nvme-cis'   }}" >> $GITHUB_OUTPUT ;;
+            "Rocky 9")             echo "name=${{ inputs.rocky_image_name_override  || 'rocky-nvme-cis'  }}" >> $GITHUB_OUTPUT ;;
+            "Windows Server 2022") echo "name=${{ inputs.windows_image_name_override || 'windows-server-2022-cis' }}" >> $GITHUB_OUTPUT ;;
           esac
 
-      - name: Prepare user_data for Pipeline Scanner
-        run: |
-          echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
-          SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
-          
-          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            cat << 'EOF' > /tmp/hw_scan_userdata.sh
-          <powershell>
-          $Password = "HwCloud!Scan2026#"
-          $UserAccount = Get-LocalUser -Name "Administrator"
-          $UserAccount | Set-LocalUser -Password (ConvertTo-SecureString $Password -AsPlainText -Force)
-          Enable-LocalUser -Name "Administrator"
+      # ── Re-authenticate before the scan phase ────────────────────────────
+      # After a 60-90 min Windows Packer build the az cli OIDC session has
+      # definitely expired. This refresh covers the VM deploy / scan / teardown
+      # steps that follow. For Linux builds the token is still fresh, but the
+      # re-login is harmless and keeps the logic uniform.
+      - name: Re-authenticate to Azure (pre-scan refresh)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-          winrm quickconfig -q
-          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
-          winrm set winrm/config/service/auth '@{Basic="true"}'
-          netsh advfirewall firewall add rule name="WinRM-HTTP" dir=in localport=5985 protocol=TCP action=allow
-          Restart-Service WinRM
-          </powershell>
-          EOF
-          else
-            printf "#!/bin/bash\nmkdir -p /home/sysadmin/.ssh\necho '$SCANNER_PUB_KEY' >> /home/sysadmin/.ssh/authorized_keys\nchown -R sysadmin:sysadmin /home/sysadmin/.ssh\nchmod 700 /home/sysadmin/.ssh\nchmod 600 /home/sysadmin/.ssh/authorized_keys\n" > /tmp/hw_scan_userdata.sh
-          fi
-          cat /tmp/hw_scan_userdata.sh
+      - name: Prepare SSH Key Injection Script
+        if: ${{ matrix.os == 'Windows Server 2022' }}
+        run: |
+          cat > /tmp/inject-ssh-key.ps1 << 'PSEOF'
+          $maxWait = 600
+          $waited = 0
+          while (-not (Get-LocalUser -Name 'azureuser' -ErrorAction SilentlyContinue)) {
+            Write-Output "Waiting for azureuser account to be created... ($waited s)"
+            Start-Sleep -Seconds 15
+            $waited += 15
+            if ($waited -ge $maxWait) {
+              Write-Output "ERROR: azureuser account never appeared. Aborting."
+              Write-Output "--- Local users that DO exist ---"
+              Get-LocalUser | Select-Object Name, Enabled, LastLogon | Format-Table
+              Write-Output "--- Azure VM Agent log ---"
+              Get-Content "C:\WindowsAzure\Logs\WaAppAgent.log" -Tail 30 -ErrorAction SilentlyContinue
+              exit 1
+            }
+          }
+          Write-Output "azureuser account exists. Proceeding."
+
+          $waited = 0
+          while ((Get-ScheduledTask -TaskName 'RestoreCISPolicies' -ErrorAction SilentlyContinue).State -eq 'Running') {
+            Write-Output "Waiting for RestoreCIS to complete... ($waited s)"
+            Start-Sleep -Seconds 10
+            $waited += 10
+            if ($waited -ge 300) { Write-Output 'Timeout waiting for RestoreCIS'; break }
+          }
+          Write-Output "RestoreCIS completed or not running. Proceeding with key injection."
+
+          $azureuserSid = (Get-LocalUser -Name 'azureuser').SID.Value
+          $profilePath = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$azureuserSid" -ErrorAction SilentlyContinue).ProfileImagePath
+          if (-not $profilePath) { $profilePath = "C:\Users\azureuser" }
+          Write-Output "User profile path: $profilePath"
+
+          $userSsh = "$profilePath\.ssh"
+          if (-not (Test-Path $userSsh)) {
+            New-Item -ItemType Directory -Force -Path $userSsh | Out-Null
+          }
+
+          Set-Content -Path "$userSsh\authorized_keys" -Value 'SSH_PUBLIC_KEY_PLACEHOLDER' -Force
+          icacls.exe "$userSsh\authorized_keys" /inheritance:r /grant "*$($azureuserSid):(F)" /grant 'NT AUTHORITY\SYSTEM:(F)'
+          
+          $sshProgramData = "$env:ProgramData\ssh"
+          if (-not (Test-Path $sshProgramData)) {
+            New-Item -ItemType Directory -Force -Path $sshProgramData | Out-Null
+          }
+          $adminKeysPath = "$sshProgramData\administrators_authorized_keys"
+          Set-Content -Path $adminKeysPath -Value 'SSH_PUBLIC_KEY_PLACEHOLDER' -Force
+          icacls.exe $adminKeysPath /inheritance:r /grant 'NT AUTHORITY\SYSTEM:(F)' /grant 'BUILTIN\Administrators:(F)'
+
+          Restart-Service sshd -Force
+          Write-Output "SSH key injected and sshd restarted."
+          PSEOF
+          
 
       - name: Deploy Ephemeral VM
         run: |
-          IMAGE_NAME="${{ steps.image.outputs.name }}"
-          echo "Resolving IMS image ID for: $IMAGE_NAME"
+          IMAGE_ID=$(az sig image-definition show \
+            --resource-group  ${{ env.AZURE_RG }} \
+            --gallery-name    ${{ env.AZURE_GALLERY }} \
+            --gallery-image-definition ${{ steps.image.outputs.name }} \
+            --query id --output tsv)
 
-          cae IMS ListImages \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            > /tmp/ims_list_output.json 2>/dev/null || true
+          if [[ "${{ matrix.os }}" == "Windows Server 2022" ]]; then
+            az vm create \
+              --resource-group  ${{ env.AZURE_RG }} \
+              --name            scan-${{ env.VM_SLUG }}-vm \
+              --image           "$IMAGE_ID" \
+              --admin-username  azureuser \
+              --admin-password  "${{ env.WINDOWS_ADMIN_PASS }}" \
+              --location        ${{ env.AZURE_LOCATION }} \
+              --size            ${{ env.VM_SIZE }} \
+              --nic-delete-option delete \
+              --os-disk-delete-option delete
 
-          HW_IMAGE_ID=$(jq -r --arg name "$IMAGE_NAME" \
-            '.images[] | select(.name == $name) | .id // empty' \
-            /tmp/ims_list_output.json | head -1)
+            RUNNER_IP=$(curl -s --max-time 10 https://api.ipify.org)
+            az network nsg rule create \
+              --resource-group ${{ env.AZURE_RG }} \
+              --nsg-name scan-${{ env.VM_SLUG }}-vmNSG \
+              --name Allow-SSH-Pipeline \
+              --priority 1010 \
+              --destination-port-ranges 22 \
+              --source-address-prefixes "$RUNNER_IP/32" \
+              --access Allow \
+              --protocol Tcp
 
-          if [[ -z "$HW_IMAGE_ID" ]]; then
-            echo "ERROR: No image found with name '$IMAGE_NAME'"
-            jq -r '.images[] | "\(.name) (\(.id))"' /tmp/ims_list_output.json || true
-            exit 1
+            # ────────────────────────────────────────────────────────────────
+            # THE FIX: Write script line-by-line (Immune to YAML indentation)
+            # ────────────────────────────────────────────────────────────────
+            echo 'Write-Output "Starting Pre-Scan Configuration..."' > /tmp/inject-ssh-key.ps1
+            echo 'Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "LocalAccountTokenFilterPolicy" -Value 1 -Force' >> /tmp/inject-ssh-key.ps1
+            echo '$adminKeysPath = "$env:ProgramData\ssh\administrators_authorized_keys"' >> /tmp/inject-ssh-key.ps1
+            echo 'Set-Content -Path $adminKeysPath -Value "SSH_PUBLIC_KEY_PLACEHOLDER" -Encoding Ascii -Force' >> /tmp/inject-ssh-key.ps1
+            echo 'icacls.exe $adminKeysPath /inheritance:r /grant "*S-1-5-18:(F)" /grant "*S-1-5-32-544:(F)" | Out-Null' >> /tmp/inject-ssh-key.ps1
+            echo '$sshdConfig = "$env:ProgramData\ssh\sshd_config"' >> /tmp/inject-ssh-key.ps1
+            echo '(Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii' >> /tmp/inject-ssh-key.ps1
+            echo 'Restart-Service sshd -Force' >> /tmp/inject-ssh-key.ps1
+            echo 'Write-Output "SSH key injected and sshd restarted."' >> /tmp/inject-ssh-key.ps1
+
+            PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
+            sed -i "s|SSH_PUBLIC_KEY_PLACEHOLDER|${PUB_KEY}|g" /tmp/inject-ssh-key.ps1
+
+            echo "Waiting 60s for VM provisioning to stabilise before injecting SSH key..."
+            sleep 60
+
+            az vm run-command invoke \
+              --resource-group ${{ env.AZURE_RG }} \
+              --name scan-${{ env.VM_SLUG }}-vm \
+              --command-id RunPowerShellScript \
+              --scripts @/tmp/inject-ssh-key.ps1
+
+            AUTO_SHUTDOWN_TIME=$(date -u -d '+2 hours' '+%H%M')
+            az vm auto-shutdown \
+              --resource-group ${{ env.AZURE_RG }} \
+              --name scan-${{ env.VM_SLUG }}-vm \
+              --time "$AUTO_SHUTDOWN_TIME"
+              
+          elif [[ "${{ matrix.os }}" == "Rocky 9" ]]; then
+            az vm create \
+              --resource-group  ${{ env.AZURE_RG }} \
+              --name            scan-${{ env.VM_SLUG }}-vm \
+              --image           "$IMAGE_ID" \
+              --admin-username  sysadmin \
+              --ssh-key-values  ~/.ssh/scanner_key.pub \
+              --location        ${{ env.AZURE_LOCATION }} \
+              --size            ${{ env.VM_SIZE }} \
+              --plan-publisher  resf \
+              --plan-product    rockylinux-x86_64 \
+              --plan-name       9-base \
+              --nic-delete-option delete \
+              --os-disk-delete-option delete
+          else
+            az vm create \
+              --resource-group  ${{ env.AZURE_RG }} \
+              --name            scan-${{ env.VM_SLUG }}-vm \
+              --image           "$IMAGE_ID" \
+              --admin-username  sysadmin \
+              --ssh-key-values  ~/.ssh/scanner_key.pub \
+              --location        ${{ env.AZURE_LOCATION }} \
+              --size            ${{ env.VM_SIZE }} \
+              --nic-delete-option delete \
+              --os-disk-delete-option delete
           fi
 
-          echo "Resolved: $IMAGE_NAME → $HW_IMAGE_ID"
-          echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
-
-          EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
-          ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
-
-          cae ECS CreateServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --server.name="$EPHEMERAL_NAME" \
-            --server.flavorRef="c6.large.2" \
-            --server.imageRef="$HW_IMAGE_ID" \
-            --server.vpcid="${{ secrets.HW_VPC_ID }}" \
-            --server.nics.1.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
-            --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
-            --server.root_volume.volumetype="SAS" \
-            --server.root_volume.size=40 \
-            --server.publicip.eip.iptype="5_bgp" \
-            --server.publicip.eip.bandwidth.size=5 \
-            --server.publicip.eip.bandwidth.sharetype="PER" \
-            --server.publicip.eip.bandwidth.chargemode="traffic" \
-            --server.publicip.delete_on_termination="true" \
-            --server.user_data="$ENCODED_USER_DATA" \
-            > create_server_output.json 2>&1
-
-          echo "--- Raw CreateServers response ---"
-          cat create_server_output.json
-
-          if ! jq -e '.job_id' create_server_output.json > /dev/null 2>&1; then
-            echo "ERROR: CreateServers API call failed."
-            exit 1
-          fi
-
-          HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
-          echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
-          echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
-          echo "Server ID saved for teardown: $HW_SERVER_ID"
-
-          HW_JOB_ID=$(jq -r '.job_id' create_server_output.json)
-          echo "Job submitted: $HW_JOB_ID. Waiting for completion..."
-
-          for i in {1..30}; do
-            JOB_OUTPUT=$(cae ECS ShowJob \
-              --cli-region="${{ env.HW_LOCATION }}" \
-              --cli-warning=false \
-              --cli-output=json \
-              --job_id="$HW_JOB_ID" \
-              2>/dev/null)
-
-            STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status // empty' 2>/dev/null)
-            echo "Job status: $STATUS (attempt $i/30)"
-
-            if [[ "$STATUS" == "SUCCESS" ]]; then 
-              echo "VM is ACTIVE. Waiting 30s for cloud-init to complete..."
-              sleep 30
-              break; fi
-            if [[ "$STATUS" == "FAIL" ]]; then
-              echo "ERROR: ECS CreateServers job failed."
-              echo "$JOB_OUTPUT"
-              exit 1
-            fi
-
-            sleep 10
-            if [[ "$i" -eq 30 ]]; then
-              echo "ERROR: Timed out waiting for VM creation."
-              exit 1
-            fi
-          done
-
-          cae ECS ShowServer \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --cli-output=json \
-            --project_id="${{ secrets.HW_PROJECT_ID }}" \
-            --server_id="$HW_SERVER_ID" \
-            > /tmp/show_server_output.json 2>/dev/null
-
-          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[0].addr // empty' \
-            /tmp/show_server_output.json)
-
+          VM_IP=$(az vm show -d \
+            -g ${{ env.AZURE_RG }} \
+            -n scan-${{ env.VM_SLUG }}-vm \
+            --query publicIps -o tsv)
           echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "Ephemeral VM IP: $VM_IP"
+          sleep 20
 
       # ──────────────────────────────────────────────────────────────────────
-      # WAIT FOR VM CONNECTION
+      # WAIT FOR SSH
       # ──────────────────────────────────────────────────────────────────────
 
-      - name: Wait for VM Connection
+      - name: Wait for SSH Connection
         run: |
-          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            echo "Waiting for WinRM to stabilize on Windows VM ($VM_IP)..."
-            for i in {1..30}; do
-              if curl -s --connect-timeout 5 "http://$VM_IP:5985/wsman" | grep -q "Bad Request"; then
-                echo "WinRM is up after attempt $i."
+          if [[ "${{ matrix.os }}" == "Windows Server 2022" ]]; then
+            echo "Waiting for SSH key auth on Windows VM ($VM_IP)..."
+            for i in {1..60}; do
+              if ssh -o StrictHostKeyChecking=no \
+                    -o ConnectTimeout=5 \
+                    -o BatchMode=yes \
+                    -i ~/.ssh/scanner_key \
+                    azureuser@"$VM_IP" "echo ok" 2>/dev/null; then
+                echo "SSH key auth succeeded after attempt $i."
                 break
               fi
-              echo "Attempt $i/30 — WinRM not ready, retrying in 20s..."
+              echo "Attempt $i/60 — not ready, retrying in 20s..."
               sleep 20
-              if [ "$i" -eq 30 ]; then exit 1; fi
+              if [ "$i" -eq 60 ]; then
+                echo "ERROR: SSH never became available."
+                exit 1
+              fi
             done
           else
-            echo "Waiting for SSH to stabilize on Linux VM ($VM_IP)..."
+            # Linux wait logic unchanged
             for i in {1..20}; do
-              if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/scanner_key sysadmin@"$VM_IP" exit 0 2>/dev/null; then
+              if ssh -o StrictHostKeyChecking=no \
+                    -o ConnectTimeout=5 \
+                    -i ~/.ssh/scanner_key \
+                    sysadmin@"$VM_IP" exit 0 2>/dev/null; then
                 echo "SSH is up after attempt $i."
                 break
               fi
               echo "Attempt $i/20 — SSH not ready, retrying in 10s..."
               sleep 10
-              if [ "$i" -eq 20 ]; then exit 1; fi
+              if [ "$i" -eq 20 ]; then
+                echo "ERROR: SSH never became available after 200s."
+                exit 1
+              fi
             done
           fi
 
-      # ──────────────────────────────────────────────────────────────────────
-      # SCAN PHASE
-      # ──────────────────────────────────────────────────────────────────────
+      # # ──────────────────────────────────────────────────────────────────────
+      # # DIAGNOSTIC DUMP (RUNS ONLY IF SSH FAILS)
+      # # ──────────────────────────────────────────────────────────────────────
+      
+      - name: Re-authenticate to Azure (Diagnostic)
+        if: failure() && matrix.os == 'Windows Server 2022'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Run Huawei Rocky OpenSCAP & Download Report
-        if: ${{ matrix.os_config.os == 'Huawei Rocky 9' }}
+      - name: Diagnose SSH state inside VM (Windows only)
+        if: failure() && matrix.os == 'Windows Server 2022'
+        run: |
+          echo "SSH Wait loop failed! Checking sshd service state and firewall from inside the VM..."
+
+          az vm run-command invoke \
+            --resource-group ${{ env.AZURE_RG }} \
+            --name scan-${{ env.VM_SLUG }}-vm \
+            --command-id RunPowerShellScript \
+            --scripts "
+              Write-Output '--- sshd service ---'
+              Get-Service sshd | Select Name, Status, StartType | Format-List
+
+              Write-Output '--- Port 22 listener ---'
+              netstat -ano | Select-String ':22'
+
+              Write-Output '=== 4. CIS RESTORE LOG ==='
+              Get-Content C:\Windows\Setup\Scripts\RestoreCIS.log -ErrorAction SilentlyContinue
+            " \
+            --query value[0].message -o tsv || true
+
+      # # ──────────────────────────────────────────────────────────────────────
+      # # SCAN PHASE
+      # # ──────────────────────────────────────────────────────────────────────
+
+      - name: Run Ubuntu OpenSCAP & Download Report
+        if: ${{ matrix.os == 'Ubuntu 22.04' }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
+              sysadmin@${{ env.VM_IP }} << 'EOF'
+            sudo apt-get update -qq
+            sudo apt-get install -y libopenscap8 unzip wget
+            wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.74/scap-security-guide-0.1.74.zip
+            unzip -q scap-security-guide-0.1.74.zip
+            sudo oscap xccdf eval \
+              --profile xccdf_org.ssgproject.content_profile_cis_level1_server \
+              --report /tmp/ubuntu-cis-report.html \
+              scap-security-guide-0.1.74/ssg-ubuntu2204-ds.xml || true
+            sudo cp /tmp/ubuntu-cis-report.html /home/sysadmin/
+            sudo chown sysadmin:sysadmin /home/sysadmin/ubuntu-cis-report.html
+          EOF
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
+            sysadmin@${{ env.VM_IP }}:/home/sysadmin/ubuntu-cis-report.html \
+            ./ubuntu-cis-report.html
+
+      - name: Run RHEL OpenSCAP & Download Report
+        if: ${{ matrix.os == 'RHEL 9' }}
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
               sysadmin@${{ env.VM_IP }} << 'EOF'
             sudo dnf install -y openscap-scanner scap-security-guide
             sudo oscap xccdf eval \
               --profile xccdf_org.ssgproject.content_profile_cis_server_l1 \
-              --report /tmp/hw-rocky-cis-report.html \
-              /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml || true
-            sudo cp /tmp/hw-rocky-cis-report.html /home/sysadmin/
-            sudo chown sysadmin:sysadmin /home/sysadmin/hw-rocky-cis-report.html
+              --report /tmp/rhel-cis-report.html \
+              /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml || true
+            sudo cp /tmp/rhel-cis-report.html /home/sysadmin/
+            sudo chown sysadmin:sysadmin /home/sysadmin/rhel-cis-report.html
           EOF
           scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
-            sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-rocky-cis-report.html \
-            ./hw-rocky-cis-report.html
+            sysadmin@${{ env.VM_IP }}:/home/sysadmin/rhel-cis-report.html \
+            ./rhel-cis-report.html
 
-      - name: Run Huawei Ubuntu 24.04 OpenSCAP & Download Report
-        if: ${{ matrix.os_config.os == 'Huawei Ubuntu 24.04' }}
+      - name: Run Rocky OpenSCAP & Download Report
+        if: ${{ matrix.os == 'Rocky 9' }}
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
               sysadmin@${{ env.VM_IP }} << 'EOF'
-            sudo apt-get update -qq
-            sudo apt-get install -y openscap-scanner unzip wget
-            wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.81/scap-security-guide-0.1.81.zip
-            unzip -q scap-security-guide-0.1.81.zip
+            sudo dnf install -y openscap-scanner scap-security-guide
             sudo oscap xccdf eval \
-              --profile xccdf_org.ssgproject.content_profile_cis_level1_server \
-              --report /tmp/hw-ubuntu-2404-cis-report.html \
-              scap-security-guide-0.1.81/ssg-ubuntu2404-ds.xml || true
-            sudo cp /tmp/hw-ubuntu-2404-cis-report.html /home/sysadmin/
-            sudo chown sysadmin:sysadmin /home/sysadmin/hw-ubuntu-2404-cis-report.html
+              --profile xccdf_org.ssgproject.content_profile_cis_server_l1 \
+              --report /tmp/rocky-cis-report.html \
+              /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml || true
+            sudo cp /tmp/rocky-cis-report.html /home/sysadmin/
+            sudo chown sysadmin:sysadmin /home/sysadmin/rocky-cis-report.html
           EOF
           scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
-            sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-ubuntu-2404-cis-report.html \
-            ./hw-ubuntu-2404-cis-report.html
+            sysadmin@${{ env.VM_IP }}:/home/sysadmin/rocky-cis-report.html \
+            ./rocky-cis-report.html
 
       - name: Run Cinc Auditor & Generate Multi-Format Reports (Windows)
-        if: ${{ matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        if: ${{ matrix.os == 'Windows Server 2022' }}
         run: |
           echo "Installing Cinc Auditor..."
           curl -sL https://omnitruck.cinc.sh/install.sh | sudo bash -s -- -P cinc-auditor
 
+          echo "Waiting 90 seconds for the Azure VM Agent to inject local credentials..."
+          sleep 90
+
           echo "Executing Cinc Auditor against hardened Windows Image..."
-          for i in {1..5}; do
+          # Extended 10-attempt loop to outlast Azure provisioning delays
+          for i in {1..10}; do
             if cinc-auditor exec https://github.com/dev-sec/windows-baseline \
-              -t winrm://Administrator@${{ env.VM_IP }} \
-              --password 'HwCloud!Scan2026#' \
+              -t ssh://azureuser@${{ env.VM_IP }} \
+              -i ~/.ssh/scanner_key \
               --input server_role=member_server \
               --input domain_joined=false \
               --backend-cache \
-              --reporter html:./hw-windows-cis-report.html json:./hw-windows-cis-report.json cli; then
+              --reporter html:./windows-cis-report.html json:./windows-cis-report.json cli; then
               
               echo "Cinc Auditor completed successfully."
               break
@@ -443,9 +658,13 @@ jobs:
             fi
           done
 
-      # ──────────────────────────────────────────────────────────────────────
-      # TEARDOWN
-      # ──────────────────────────────────────────────────────────────────────
+          echo "Reports generated successfully."
+          echo "HTML Size: $(du -sh ./windows-cis-report.html | cut -f1 || echo '0')"
+          echo "JSON Size: $(du -sh ./windows-cis-report.json | cut -f1 || echo '0')"
+
+      # # ──────────────────────────────────────────────────────────────────────
+      # # TEARDOWN
+      # # ──────────────────────────────────────────────────────────────────────
 
       - name: Prune Empty Reports (Failsafe)
         if: always()
@@ -453,16 +672,32 @@ jobs:
           echo "Removing any 0-byte reports to prevent GitHub Release API errors..."
           find . -maxdepth 1 -name "*-cis-report.*" -type f -size 0 -print -delete
 
-      - name: Destroy Ephemeral VM (Huawei)
-        if: always() && env.HW_SERVER_ID != ''
+      # NEW: The 3rd Re-auth step. If the scan took 15 minutes, the Azure CLI token is dead!
+      - name: Re-authenticate to Azure (Teardown)
+        if: always() && env.VM_IP != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Destroy Ephemeral VM
+        if: always() && env.VM_IP != ''
         run: |
-          cae ECS DeleteServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --servers.1.id="$HW_SERVER_ID" \
-            --delete_publicip=true \
-            --delete_volume=true
-          echo "Ephemeral VM $HW_SERVER_ID deletion requested."
+          az vm delete \
+            --resource-group ${{ env.AZURE_RG }} \
+            --name scan-${{ env.VM_SLUG }}-vm \
+            --yes
+
+          az network public-ip list \
+            --resource-group ${{ env.AZURE_RG }} \
+            --query "[?ipConfiguration==null].[name]" -o tsv \
+            | xargs -I {} az network public-ip delete \
+                --resource-group ${{ env.AZURE_RG }} --name {} || true
+
+          az network nsg delete \
+            --resource-group ${{ env.AZURE_RG }} \
+            --name scan-${{ env.VM_SLUG }}-vmNSG || true
 
       - name: Upload Report Artifact
         if: always()
@@ -471,24 +706,11 @@ jobs:
           name: ${{ env.VM_SLUG }}-report
           path: ./*-cis-report.*
 
-      # ──────────────────────────────────────────────────────────────────────
-      # RUNNER CLEANUP
-      # ──────────────────────────────────────────────────────────────────────
-
-      - name: Clean up Self-Hosted Runner State
-        if: always()
-        run: |
-          echo "Cleaning up temporary files to prevent state contamination..."
-          rm -f ~/.ssh/scanner_key ~/.ssh/scanner_key.pub
-          rm -f ./*-cis-report.*
-          rm -f ./crash.log
-          echo "Runner cleanup complete."
-
   # ============================================================
   # STAGE 3: PUBLISH (Tag & Release)
   # ============================================================
   release:
-    name: Publish Huawei DevSecOps Release
+    name: Publish DevSecOps Release
     needs: [prepare, matrix-factory]
     runs-on: ubuntu-latest
     if: ${{ !cancelled() && !failure() }}
@@ -504,28 +726,30 @@ jobs:
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          tag_prefix: hw-v
           custom_tag: ${{ needs.prepare.outputs.new_version }}
 
       - name: Publish Golden Image Release
         if: ${{ inputs.scan_only != true }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: hw-v${{ needs.prepare.outputs.new_version }}
-          name: "Huawei Golden Image Release v${{ needs.prepare.outputs.new_version }}"
+          tag_name: v${{ needs.prepare.outputs.new_version }}
+          name: "Golden Image Release v${{ needs.prepare.outputs.new_version }}"
           body: |
-            ## Huawei Cloud Golden Image Factory — v${{ needs.prepare.outputs.new_version }}
+            ## Golden Image Factory — v${{ needs.prepare.outputs.new_version }}
 
-            Automated CIS Level 1 Compliance Reports for all built Huawei Cloud images.
+            Automated CIS Level 1 Compliance Reports for all built images.
 
             | Image | Benchmark | Profile |
             |-------|-----------|---------|
-            | Huawei Rocky Linux 9 | CIS AlmaLinux/Rocky Linux 9 | Level 1 Server |
-            | Huawei Ubuntu 24.04 | CIS Ubuntu Linux 24.04 LTS | Level 1 Server |
-            | Huawei Windows Server 2022 | CIS Microsoft Windows Server 2022 | Level 1 Member Server |
+            | Ubuntu 22.04 | CIS Ubuntu Linux 22.04 LTS | Level 1 Server |
+            | RHEL 9 | CIS Red Hat Enterprise Linux 9 | Level 1 Server |
+            | Rocky Linux 9 | CIS AlmaLinux/Rocky Linux 9 | Level 1 Server |
+            | Windows Server 2022 | CIS Microsoft Windows Server 2022 | Level 1 Member Server |
 
-            **IMS image version:** `${{ needs.prepare.outputs.new_version }}`
-            **Region:** `${{ inputs.hw_region || vars.HW_LOCATION }}`
+            **Azure Compute Gallery image version:** `${{ needs.prepare.outputs.new_version }}`
+
+            > The Windows compliance report is generated at **build time** (pre-sysprep)
+            > by `run-compliance-scan.ps1` and baked into the image at `C:\CIS-Reports\`.
           fail_on_unmatched_files: false
           files: ./reports/*-cis-report.*
 
@@ -533,11 +757,14 @@ jobs:
         if: ${{ inputs.scan_only == true }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: hw-scan-report-${{ github.run_number }}
-          name: "Huawei Ad-Hoc Compliance Scan #${{ github.run_number }}"
+          tag_name: scan-report-${{ github.run_number }}
+          name: "Ad-Hoc Compliance Scan #${{ github.run_number }}"
           body: |
-            Manual CIS Level 1 compliance evaluation against existing Huawei IMS images.
+            Manual CIS Level 1 compliance evaluation against existing Gallery Images.
             *(No new image versions were built during this run.)*
+
+            > **Windows note:** The report was retrieved from the pre-baked
+            > `C:\CIS-Reports\` directory inside the deployed VM.
           fail_on_unmatched_files: false
           files: |
             ./reports/*-cis-report.html
