@@ -31,8 +31,8 @@ source "huaweicloud-ecs" "windows_cis" {
   subnets         = [var.hw_subnet_id]
   security_groups = [var.hw_security_group_id]
 
-  ssh_interface   = "private_ip"
-  
+  use_floating_ip = false
+
   # Huawei Windows communicator configuration
   communicator   = "winrm"
   winrm_username = "Administrator"
