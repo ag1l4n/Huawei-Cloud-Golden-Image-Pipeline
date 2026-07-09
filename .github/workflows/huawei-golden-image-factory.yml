@@ -177,6 +177,7 @@ jobs:
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
             cat << 'EOF' > /tmp/hw_userdata.ps1
           #ps1_sysnative
+          net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
           winrm quickconfig -q
           winrm set winrm/config/service '@{AllowUnencrypted="true"}'
           winrm set winrm/config/service/auth '@{Basic="true"}'
