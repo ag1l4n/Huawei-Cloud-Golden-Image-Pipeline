@@ -77,7 +77,7 @@ jobs:
         run: |
           CHOICE="${{ inputs.os_choice }}"
           if [[ -z "$CHOICE" || "$CHOICE" == "all" ]]; then
-            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"},{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Rocky 9" ]]; then
             echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Ubuntu 24.04" ]]; then
@@ -215,7 +215,7 @@ jobs:
           packer build \
             -force \
             -var "image_version=${{ needs.prepare.outputs.new_version }}" \
-            -var "user_data_file=/tmp/hw_userdata.sh" \
+            -var "user_data_file=${{ env.USERDATA_FILE }}" \
             .
         working-directory: >-
           ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
@@ -233,10 +233,9 @@ jobs:
         id: image
         run: |
           case "${{ matrix.os_config.os }}" in
-            # ── prefix matches the actual IMS naming convention ──
             "Huawei Rocky 9")       echo "name=${{ inputs.rocky_image_name_override   || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
             "Huawei Ubuntu 24.04")  echo "name=${{ inputs.ubuntu_image_name_override  || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-            "Windows Server 2022")  echo "name=${{ inputs.windows_image_name_override || format('windows2022-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Windows Server 2022") echo "name=${{ inputs.windows_image_name_override || format('win2022-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
           esac
 
       - name: Prepare user_data for Pipeline Scanner
@@ -255,7 +254,20 @@ jobs:
           EOF
             sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
           else
-            printf "#!/bin/bash\nmkdir -p /home/sysadmin/.ssh\necho '$SCANNER_PUB_KEY' >> /home/sysadmin/.ssh/authorized_keys\nchown -R sysadmin:sysadmin /home/sysadmin/.ssh\nchmod 700 /home/sysadmin/.ssh\nchmod 600 /home/sysadmin/.ssh/authorized_keys\n" > /tmp/hw_scan_userdata.sh
+            # Inject proxy settings so OpenSCAP downloads succeed on the isolated Linux scanner VM
+            cat << 'EOF' > /tmp/hw_scan_userdata.sh
+          #!/bin/bash
+          echo 'acquire::http::proxy "http://172.30.100.5:8888/";' > /etc/apt/apt.conf.d/00proxy
+          echo "export http_proxy=http://172.30.100.5:8888" >> /etc/profile.d/proxy.sh
+          echo "export https_proxy=http://172.30.100.5:8888" >> /etc/profile.d/proxy.sh
+          
+          mkdir -p /home/sysadmin/.ssh
+          echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
+          chown -R sysadmin:sysadmin /home/sysadmin/.ssh
+          chmod 700 /home/sysadmin/.ssh
+          chmod 600 /home/sysadmin/.ssh/authorized_keys
+          EOF
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
             cat /tmp/hw_scan_userdata.sh
           fi
 
@@ -290,6 +302,9 @@ jobs:
             ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
           fi
 
+          # -----------------------------------------------------------------
+          # FIX: Removed EIP creation flags for Solution 2 isolated sandbox.
+          # -----------------------------------------------------------------
           cae ECS CreateServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
@@ -301,11 +316,6 @@ jobs:
             --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
             --server.root_volume.volumetype="SAS" \
             --server.root_volume.size=40 \
-            --server.publicip.eip.iptype="5_bgp" \
-            --server.publicip.eip.bandwidth.size=5 \
-            --server.publicip.eip.bandwidth.sharetype="PER" \
-            --server.publicip.eip.bandwidth.chargemode="traffic" \
-            --server.publicip.delete_on_termination="true" \
             --server.user_data="$ENCODED_USER_DATA" \
             > create_server_output.json 2>&1
 
@@ -317,8 +327,6 @@ jobs:
             exit 1
           fi
 
-          # ── Write server ID and name to GITHUB_ENV immediately ──────────────
-          # Do this before polling so teardown can clean up even if polling fails
           HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
           echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
           echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
@@ -371,11 +379,13 @@ jobs:
           echo "--- Raw ShowServer response ---"
           cat /tmp/show_server_output.json
 
-          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[0].addr // empty' \
-            /tmp/show_server_output.json)
+          # -----------------------------------------------------------------
+          # FIX: Explicitly extract the Private IP (OS-EXT-IPS:type=="fixed")
+          # -----------------------------------------------------------------
+          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[] | select(."OS-EXT-IPS:type"=="fixed") | .addr // empty' /tmp/show_server_output.json | head -1)
 
           echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "Ephemeral VM IP: $VM_IP"
+          echo "Ephemeral VM Private IP: $VM_IP"
 
       # ──────────────────────────────────────────────────────────────────────
       # WAIT FOR SSH
@@ -477,11 +487,13 @@ jobs:
       - name: Destroy Ephemeral VM (Huawei)
         if: always() && env.HW_SERVER_ID != ''
         run: |
+          # -----------------------------------------------------------------
+          # FIX: Removed --delete_publicip=true
+          # -----------------------------------------------------------------
           cae ECS DeleteServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
             --servers.1.id="$HW_SERVER_ID" \
-            --delete_publicip=true \
             --delete_volume=true
           echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
