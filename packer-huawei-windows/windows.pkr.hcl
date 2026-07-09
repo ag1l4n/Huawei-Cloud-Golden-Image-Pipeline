@@ -31,8 +31,11 @@ source "huaweicloud-ecs" "windows_cis" {
   subnets         = [var.hw_subnet_id]
   security_groups = [var.hw_security_group_id]
 
-  eip_type           = "5_bgp"
-  eip_bandwidth_size = 5
+  # ---------------------------------------------------------------------------
+  # REMOVED: eip_type & eip_bandwidth_size
+  # Why: The VM will now use only its Private IP and route web traffic via
+  # the HTTP Proxy on the CI/CD runner.
+  # ---------------------------------------------------------------------------
 
   # Huawei Windows communicator configuration
   communicator   = "winrm"
@@ -49,12 +52,14 @@ source "huaweicloud-ecs" "windows_cis" {
 build {
   sources = ["source.huaweicloud-ecs.windows_cis"]
 
-  # 1. Bootstrap WinRM
+  # 1. Bootstrap WinRM (and WinHTTP Proxy!)
   provisioner "powershell" {
     script = "${path.root}/../packer-huawei-windows/scripts/bootstrap-winrm.ps1"
   }
 
   # 2. Install OpenSSH Server
+  # NOTE: This requires internet access to Microsoft servers! It will succeed
+  # because we configure netsh winhttp proxy in bootstrap-winrm.ps1 below.
   provisioner "powershell" {
     elevated_user     = "Administrator"
     elevated_password = var.windows_admin_pass
@@ -68,7 +73,11 @@ build {
   provisioner "ansible" {
     playbook_file   = "${path.root}/../ansible/windows-cis-l1.yml"
     user            = "Administrator"
-    use_proxy       = false
+    
+    # Keep this FALSE! This tells Ansible on the runner NOT to use a proxy
+    # to initiate the WinRM connection to the target VM's private IP.
+    use_proxy       = false 
+    
     extra_arguments = [
       "-e", "ansible_connection=winrm",
       "-e", "ansible_winrm_scheme=http",
@@ -78,7 +87,16 @@ build {
       "-e", "ansible_winrm_read_timeout_sec=150",
       "-e", "ansible_password=${var.windows_admin_pass}",
       "--skip-tags", "winrm_connectivity",
-      "-e", "@${path.root}/../ansible/cis-overrides.yml"
+      "-e", "@${path.root}/../ansible/cis-overrides.yml",
+      
+      # -----------------------------------------------------------------------
+      # NEW: Inject Proxy Variables for Playbook Execution
+      # This ensures any module requiring web access inside the Windows VM
+      # routes traffic through your runner's Tinyproxy port (8888).
+      # -----------------------------------------------------------------------
+      "-e", "http_proxy=http://172.30.100.5:8888",
+      "-e", "https_proxy=http://172.30.100.5:8888",
+      "-e", "no_proxy=localhost,127.0.0.1,172.30.0.0/16"
     ]
   }
 
