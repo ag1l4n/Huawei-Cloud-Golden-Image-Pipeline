@@ -31,12 +31,8 @@ source "huaweicloud-ecs" "windows_cis" {
   subnets         = [var.hw_subnet_id]
   security_groups = [var.hw_security_group_id]
 
-  # ---------------------------------------------------------------------------
-  # REMOVED: eip_type & eip_bandwidth_size
-  # Why: The VM will now use only its Private IP and route web traffic via
-  # the HTTP Proxy on the CI/CD runner.
-  # ---------------------------------------------------------------------------
-
+  ssh_interface   = "private_ip"
+  
   # Huawei Windows communicator configuration
   communicator   = "winrm"
   winrm_username = "Administrator"
