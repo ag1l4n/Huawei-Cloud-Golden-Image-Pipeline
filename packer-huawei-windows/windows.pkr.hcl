@@ -85,15 +85,6 @@ build {
       "-e", "ansible_password=${var.windows_admin_pass}",
       "--skip-tags", "winrm_connectivity",
       "-e", "@${path.root}/../ansible/cis-overrides.yml",
-      
-      # -----------------------------------------------------------------------
-      # NEW: Inject Proxy Variables for Playbook Execution
-      # This ensures any module requiring web access inside the Windows VM
-      # routes traffic through your runner's Tinyproxy port (8888).
-      # -----------------------------------------------------------------------
-      "-e", "http_proxy=http://172.30.100.5:8888",
-      "-e", "https_proxy=http://172.30.100.5:8888",
-      "-e", "no_proxy=localhost,127.0.0.1,172.30.0.0/16"
     ]
   }
 
