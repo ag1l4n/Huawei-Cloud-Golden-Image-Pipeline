@@ -180,11 +180,13 @@ jobs:
             cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
           #ps1_sysnative
           net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
+          winrm set winrm/config/service/auth '@{Basic="true"; Kerberos="false"; Negotiate="false"}'
           winrm quickconfig -q
           winrm set winrm/config/service '@{AllowUnencrypted="true"}'
           winrm set winrm/config/service/auth '@{Basic="true"}'
-          Enable-NetFirewallRule -DisplayGroup "Windows Remote Management" -ErrorAction SilentlyContinue
-          New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+          # Ensure the firewall allows the traffic
+          Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
+          New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow
           EOF
             echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
           else
@@ -246,10 +248,6 @@ jobs:
             # Inject proxy settings so OpenSCAP downloads succeed on the isolated Linux scanner VM
             cat << 'EOF' > /tmp/hw_scan_userdata.sh
           #!/bin/bash
-          echo 'acquire::http::proxy "http://172.30.100.5:8888/";' > /etc/apt/apt.conf.d/00proxy
-          echo "export http_proxy=http://172.30.100.5:8888" >> /etc/profile.d/proxy.sh
-          echo "export https_proxy=http://172.30.100.5:8888" >> /etc/profile.d/proxy.sh
-          
           mkdir -p /home/sysadmin/.ssh
           echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
           chown -R sysadmin:sysadmin /home/sysadmin/.ssh
@@ -475,9 +473,6 @@ jobs:
       - name: Destroy Ephemeral VM (Huawei)
         if: always() && env.HW_SERVER_ID != ''
         run: |
-          # -----------------------------------------------------------------
-          # FIX: Removed --delete_publicip=true
-          # -----------------------------------------------------------------
           cae ECS DeleteServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
