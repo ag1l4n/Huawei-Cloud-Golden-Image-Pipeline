@@ -175,31 +175,21 @@ jobs:
         if: ${{ inputs.scan_only != true }}
         run: |
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            cat << 'EOF' > /tmp/hw_userdata.ps1
-          #ps1_sysnative
-          net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
-          # Set system-wide WinHTTP proxy for Windows Update and PowerShell WebRequests
-          netsh winhttp set proxy proxy-server="http=172.30.100.5:8888;https=172.30.100.5:8888" bypass-list="localhost;127.0.0.1;172.30.*"
-
-          # Set Environment variables for current machine
-          [Environment]::SetEnvironmentVariable("http_proxy", "http://172.30.100.5:8888", "Machine")
-          [Environment]::SetEnvironmentVariable("https_proxy", "http://172.30.100.5:8888", "Machine")
-          winrm quickconfig -q
-          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
-          winrm set winrm/config/service/auth '@{Basic="true"}'
-          Set-NetFirewallRule -Name "WINRM-HTTP-In-TCP" -RemoteAddress Any
-          EOF
+            # We pipe through sed to strip leading YAML spaces. 
+            # #ps1_sysnative MUST be at the exact beginning of the file!
+            cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
+            #ps1_sysnative
+            net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
+            winrm quickconfig -q
+            winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+            winrm set winrm/config/service/auth '@{Basic="true"}'
+            Enable-NetFirewallRule -DisplayGroup "Windows Remote Management" -ErrorAction SilentlyContinue
+            New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+            EOF
             echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
+          
           else
             #!/bin/bash
-            # Configure APT/DNF to use the proxy
-            echo 'acquire::http::proxy "http://172.30.100.5:8888/";' > /etc/apt/apt.conf.d/00proxy
-            echo 'acquire::https::proxy "http://172.30.100.5:8888/";' >> /etc/apt/apt.conf.d/00proxy
-
-            # Set global environment variables
-            echo "export http_proxy=http://172.30.100.5:8888" >> /etc/profile.d/proxy.sh
-            echo "export https_proxy=http://172.30.100.5:8888" >> /etc/profile.d/proxy.sh
-            echo "export no_proxy=localhost,127.0.0.1,172.30.0.0/16" >> /etc/profile.d/proxy.sh
             printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
             chmod +x /tmp/hw_userdata.sh
             echo "Verifying user_data contents:"
