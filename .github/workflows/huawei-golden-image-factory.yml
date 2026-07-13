@@ -178,16 +178,15 @@ jobs:
             # We pipe through sed to strip leading YAML spaces. 
             # #ps1_sysnative MUST be at the exact beginning of the file!
             cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
-            #ps1_sysnative
-            net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
-            winrm quickconfig -q
-            winrm set winrm/config/service '@{AllowUnencrypted="true"}'
-            winrm set winrm/config/service/auth '@{Basic="true"}'
-            Enable-NetFirewallRule -DisplayGroup "Windows Remote Management" -ErrorAction SilentlyContinue
-            New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
-            EOF
+          #ps1_sysnative
+          net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
+          winrm quickconfig -q
+          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+          winrm set winrm/config/service/auth '@{Basic="true"}'
+          Enable-NetFirewallRule -DisplayGroup "Windows Remote Management" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+          EOF
             echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
-          
           else
             #!/bin/bash
             printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
