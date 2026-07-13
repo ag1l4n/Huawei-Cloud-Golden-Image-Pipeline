@@ -302,9 +302,6 @@ jobs:
             ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
           fi
 
-          # -----------------------------------------------------------------
-          # FIX: Removed EIP creation flags for Solution 2 isolated sandbox.
-          # -----------------------------------------------------------------
           cae ECS CreateServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
@@ -316,6 +313,11 @@ jobs:
             --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
             --server.root_volume.volumetype="SAS" \
             --server.root_volume.size=40 \
+            --server.publicip.eip.iptype="5_bgp" \
+            --server.publicip.eip.bandwidth.size=5 \
+            --server.publicip.eip.bandwidth.sharetype="PER" \
+            --server.publicip.eip.bandwidth.chargemode="traffic" \
+            --server.publicip.delete_on_termination="true" \
             --server.user_data="$ENCODED_USER_DATA" \
             > create_server_output.json 2>&1
 
@@ -376,16 +378,13 @@ jobs:
             --server_id="$HW_SERVER_ID" \
             > /tmp/show_server_output.json 2>/dev/null
 
-          echo "--- Raw ShowServer response ---"
-          cat /tmp/show_server_output.json
-
           # -----------------------------------------------------------------
-          # FIX: Explicitly extract the Private IP (OS-EXT-IPS:type=="fixed")
+          # Fetch the Public (Floating) IP assigned to the instance
           # -----------------------------------------------------------------
-          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[] | select(."OS-EXT-IPS:type"=="fixed") | .addr // empty' /tmp/show_server_output.json | head -1)
+          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[] | select(."OS-EXT-IPS:type"=="floating") | .addr // empty' /tmp/show_server_output.json | head -1)
 
           echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "Ephemeral VM Private IP: $VM_IP"
+          echo "Ephemeral VM Public IP: $VM_IP"
 
       # ──────────────────────────────────────────────────────────────────────
       # WAIT FOR SSH
@@ -494,6 +493,7 @@ jobs:
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
             --servers.1.id="$HW_SERVER_ID" \
+            --delete_publicip=true \
             --delete_volume=true
           echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
