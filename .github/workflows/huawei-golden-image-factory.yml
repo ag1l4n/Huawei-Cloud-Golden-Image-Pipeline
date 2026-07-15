@@ -143,6 +143,7 @@ jobs:
 
           echo "🔍 Verifying AK/SK against private ECS endpoint..."
           export HW_ECS_ENDPOINT="https://ecs.${HW_LOCATION}.alphaedge.tmone.com.my"
+          curl -v https://ecs.my-kualalumpur-1.alphaedge.tmone.com.my
 
           python3 - <<'PYEOF'
           import os, sys
