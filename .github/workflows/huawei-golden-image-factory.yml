@@ -142,29 +142,18 @@ jobs:
           tar -zxvf caecloud-cli-linux-amd64.tar.gz
           mv $(pwd)/cae /usr/local/bin/
           cae version
-          cae configure show --cli-profile=default
-          {
-            "name": "default",
-            "mode": "AKSK",
-            "accessKeyId": "HW_ACCESS_KEY",
-            "secretAccessKey": "HW_SECRET_KEY",
-            "securityToken": "",
-            "region": "HW_LOCATION",
-            "projectId": "HW_PROJECT_ID",
-            "domainId": "",
-            "skipSecureVerify": "false",
-            "readTimeout": 10,
-            "connectTimeout": 5,
-            "retryCount": 0
-          }
+          printf "%s\n%s\n%s\n%s\n" \
+            "${{ secrets.HW_ACCESS_KEY }}" \
+            "${{ secrets.HW_SECRET_KEY }}" \
+            "${{ secrets.HW_SECRET_KEY }}" \
+            "${{ secrets.HW_LOCATION   }}" | cae configure init
+
 
       - name: 'Install Linux Tools (Ansible + HW SDK)'
         run: |
           sudo apt-get update -qq
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user 'ansible>=10.0.0,<11.0.0'
-          pip install huaweicloudsdkcore huaweicloudsdkecs huaweicloudsdkvpc --quiet
-          python3 -c "import huaweicloudsdkecs; print('✅ SDK import OK')"
 
 
       # ──────────────────────────────────────────────────────────────────────
