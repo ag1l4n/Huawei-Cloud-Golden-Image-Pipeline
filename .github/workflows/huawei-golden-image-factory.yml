@@ -92,7 +92,7 @@ jobs:
   matrix-factory:
     name: Build & Scan (${{ matrix.os_config.os }})
     needs: prepare
-    runs-on: ${{ matrix.os_config.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
