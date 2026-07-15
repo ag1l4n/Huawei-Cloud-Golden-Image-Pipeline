@@ -138,41 +138,34 @@ jobs:
           HW_PROJECT_ID:                ${{ secrets.HW_PROJECT_ID }}
           HW_LOCATION:                  ${{ inputs.hw_region || vars.HW_LOCATION }}
         run: |
-          echo "📦 Installing Huawei Cloud Python SDK..."
+          curl -LO "https://tm-cli.obs.my-kualalumpur-1.alphaedge.tmone.com.my/cli/latest/caecloud-cli-linux-amd64.tar.gz"
+          tar -zxvf caecloud-cli-linux-amd64.tar.gz
+          mv $(pwd)/cae /usr/local/bin/
+          cae version
+          cae configure show --cli-profile=default
+          {
+            "name": "default",
+            "mode": "AKSK",
+            "accessKeyId": "HW_ACCESS_KEY",
+            "secretAccessKey": "HW_SECRET_KEY",
+            "securityToken": "",
+            "region": "HW_LOCATION",
+            "projectId": "HW_PROJECT_ID",
+            "domainId": "",
+            "skipSecureVerify": "false",
+            "readTimeout": 10,
+            "connectTimeout": 5,
+            "retryCount": 0
+          }
+
+      - name: 'Install Linux Tools (Ansible + HW SDK)'
+        run: |
+          sudo apt-get update -qq
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user 'ansible>=10.0.0,<11.0.0'
           pip install huaweicloudsdkcore huaweicloudsdkecs huaweicloudsdkvpc --quiet
+          python3 -c "import huaweicloudsdkecs; print('✅ SDK import OK')"
 
-          echo "🔍 Verifying AK/SK against private ECS endpoint..."
-          export HW_ECS_ENDPOINT="https://ecs.${HW_LOCATION}.alphaedge.tmone.com.my"
-          curl -v https://ecs.my-kualalumpur-1.alphaedge.tmone.com.my
-
-          python3 - <<'PYEOF'
-          import os, sys
-          from huaweicloudsdkcore.auth.credentials import BasicCredentials
-          from huaweicloudsdkecs.v2 import EcsClient, ListServersDetailsRequest
-          from huaweicloudsdkcore.exceptions import exceptions
-
-          ak         = os.environ["HW_ACCESS_KEY"]
-          sk         = os.environ["HW_SECRET_KEY"]
-          project_id = os.environ["HW_PROJECT_ID"]
-          endpoint   = os.environ["HW_ECS_ENDPOINT"]
-
-          try:
-              client = EcsClient.new_builder() \
-                  .with_credentials(BasicCredentials(ak, sk, project_id)) \
-                  .with_endpoint(endpoint) \
-                  .build()
-              resp  = client.list_servers_details(ListServersDetailsRequest())
-              count = len(resp.servers) if resp.servers else 0
-              print(f"✅ [HuaweiCloud] SDK auth OK — {count} ECS instance(s) visible")
-              print(f"   endpoint: {endpoint}")
-          except exceptions.ClientRequestException as e:
-              print(f"❌ SDK auth failed: {e.status_code} {e.error_code} {e.error_msg}",
-                    file=sys.stderr)
-              sys.exit(1)
-          except Exception as e:
-              print(f"❌ Unexpected error: {e}", file=sys.stderr)
-              sys.exit(1)
-          PYEOF
 
       # ──────────────────────────────────────────────────────────────────────
       # PACKER BUILD PHASE
@@ -188,22 +181,20 @@ jobs:
         if: ${{ inputs.scan_only != true }}
         working-directory: ./ansible
         run: |
-          if [ -d "roles/ubuntu24-cis" ]; then
-            echo "Ansible roles already exist. Skipping download."
-          else
-            echo "Roles missing. Installing from requirements.yml..."
-            ansible-galaxy install -r requirements.yml --roles-path roles/
-          fi
+          echo "Roles missing. Installing from requirements.yml..."
+          ansible-galaxy install -r requirements.yml --roles-path roles/
+          ansible-galaxy role install git+https://github.com/ansible-lockdown/Windows-2022-CIS.git --roles-path roles/
 
-  #     - name: Packer Init
-  #       if: ${{ inputs.scan_only != true }}
-  #       env:
-  #         PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       run: packer init .
-  #       working-directory: >-
-  #         ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
-  #          || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
-  #          || './packer-huawei-windows' }}
+
+      - name: Packer Init
+        if: ${{ inputs.scan_only != true }}
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: packer init .
+        working-directory: >-
+          ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
+           || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
+           || './packer-huawei-windows' }}
 
   #     - name: Configure Huawei Cloud CLI
   #       run: |
