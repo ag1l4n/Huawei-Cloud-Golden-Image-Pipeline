@@ -135,25 +135,15 @@ jobs:
         run: |
           curl -LO "https://tm-cli.obs.my-kualalumpur-1.alphaedge.tmone.com.my/cli/latest/caecloud-cli-linux-amd64.tar.gz"
           tar -zxvf caecloud-cli-linux-amd64.tar.gz
-          mv $(pwd)/cae /usr/local/bin/
-          cae version
-          pwd
-          cat <<EOF > ~/usr/local/bin/cae/config.json
-          {
-            "name": "default",
-            "mode": "AKSK",
-            "accessKeyId": "${{ secrets.HW_ACCESS_KEY }}",
-            "secretAccessKey": "${{ secrets.HW_SECRET_KEY }}",
-            "securityToken": "",
-            "region": "${{ secrets.HW_LOCATION }}",
-            "projectId": "${{ secrets.HW_PROJECT_ID }}",
-            "domainId": "",
-            "skipSecureVerify": "false",
-            "readTimeout": 10,
-            "connectTimeout": 5,
-            "retryCount": 0
-          }
-          EOF
+          sudo mv $(pwd)/cae /usr/local/bin/
+          echo "y" | cae version
+          echo "y" | cae configure set \
+            --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
+            --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
+            --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-skip-secure-verify=true
+
 
       
 
