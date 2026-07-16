@@ -44,3 +44,8 @@ variable "windows_admin_pass" {
   type = string
   sensitive = true
 }
+
+variable "hw_eip_id" {
+  type        = string
+  description = "ID of the pre-allocated EIP to reuse for Packer builds"
+}

@@ -31,8 +31,7 @@ source "huaweicloud-ecs" "windows_cis" {
   subnets         = [var.hw_subnet_id]
   security_groups = [var.hw_security_group_id]
 
-  eip_type           = "5_bgp"
-  eip_bandwidth_size = 5
+  floating_ip = var.hw_eip_id
 
   # Huawei Windows communicator configuration
   communicator   = "winrm"
