@@ -138,8 +138,7 @@ jobs:
           mv $(pwd)/cae /usr/local/bin/
           cae version
           pwd
-          ls /usr/local/bin
-          cat <<EOF > ~/.usr/local/bin/cae/config.json
+          cat <<EOF > ~./usr/local/bin/cae/config.json
           {
             "name": "default",
             "mode": "AKSK",
