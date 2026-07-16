@@ -60,7 +60,7 @@ build {
   # because we configure netsh winhttp proxy in bootstrap-winrm.ps1 below.
   provisioner "powershell" {
     elevated_user     = "Administrator"
-    elevated_password = var.windows_admin_pass
+    elevated_password = build.WinRMPassword
     inline = [
       "Write-Output 'Installing OpenSSH Server...'",
       "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0"
