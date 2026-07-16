@@ -184,14 +184,14 @@ jobs:
            || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
            || './packer-huawei-windows' }}
 
-      - name: Configure Huawei Cloud CLI
-        run: |
-          echo "y" | cae configure set \
-            --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
-            --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
-            --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-skip-secure-verify=true
+      # - name: Configure Huawei Cloud CLI
+      #   run: |
+      #     echo "y" | cae configure set \
+      #       --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
+      #       --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
+      #       --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
+      #       --cli-region="${{ env.HW_LOCATION }}" \
+      #       --cli-skip-secure-verify=true
         
       - name: Prepare user_data with WinRM and PermitRootLogin fix
         if: ${{ inputs.scan_only != true }}
