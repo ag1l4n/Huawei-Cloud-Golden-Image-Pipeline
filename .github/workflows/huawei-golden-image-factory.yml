@@ -132,8 +132,11 @@ jobs:
               ;;
           esac
 
-      - name: 'Install HuaweiCloud SDK & Set Configuration'
+      - name: 'Install CAE CLI, Ansible & Set Configuration'
         run: |
+          sudo apt-get update -qq
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user 'ansible>=10.0.0,<11.0.0'
           curl -LO "https://tm-cli.obs.my-kualalumpur-1.alphaedge.tmone.com.my/cli/latest/caecloud-cli-linux-amd64.tar.gz"
           tar -zxvf caecloud-cli-linux-amd64.tar.gz
           sudo mv $(pwd)/cae /usr/local/bin/
@@ -144,17 +147,6 @@ jobs:
             --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-skip-secure-verify=true
-
-
-      
-
-
-      - name: 'Install Linux Tools (Ansible + HW SDK)'
-        run: |
-          sudo apt-get update -qq
-          python3 -m pip install --user --upgrade pip
-          python3 -m pip install --user 'ansible>=10.0.0,<11.0.0'
-
 
       # ──────────────────────────────────────────────────────────────────────
       # PACKER BUILD PHASE
@@ -214,6 +206,17 @@ jobs:
           winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
 
           New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
+              -Name 'LmCompatibilityLevel' -Value 2 -Type DWord -Force
+
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+              -Name 'NTLMMinServerSec' -Value 536870912 -Type DWord -Force
+
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' `
+              -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
+
+          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' `
+              -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
 
           Set-Service -Name WinRM -StartupType Automatic
           Start-Service WinRM

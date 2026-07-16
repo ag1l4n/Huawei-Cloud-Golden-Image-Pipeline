@@ -36,7 +36,7 @@ source "huaweicloud-ecs" "windows_cis" {
   # Huawei Windows communicator configuration
   communicator   = "winrm"
   winrm_username = "Administrator"
-  winrm_password = var.windows_admin_pass
+  # winrm_password = var.windows_admin_pass
   winrm_use_ssl  = true
   winrm_insecure = true
   winrm_use_ntlm = true
