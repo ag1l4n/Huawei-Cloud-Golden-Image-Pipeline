@@ -137,7 +137,7 @@ jobs:
           tar -zxvf caecloud-cli-linux-amd64.tar.gz
           mv $(pwd)/cae /usr/local/bin/
           cae version
-          cat <<EOF > ~/.usr/local/bin/config.json
+          cat <<EOF > ~/.usr/local/bin/cae/config.json
           {
             "name": "default",
             "mode": "AKSK",
