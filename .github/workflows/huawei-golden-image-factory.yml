@@ -132,21 +132,29 @@ jobs:
           esac
 
       - name: 'Install HuaweiCloud SDK & Verify Auth'
-        env:
-          HW_ACCESS_KEY:                ${{ secrets.HW_ACCESS_KEY }}
-          HW_SECRET_KEY:                ${{ secrets.HW_SECRET_KEY }}
-          HW_PROJECT_ID:                ${{ secrets.HW_PROJECT_ID }}
-          HW_LOCATION:                  ${{ inputs.hw_region || vars.HW_LOCATION }}
         run: |
           curl -LO "https://tm-cli.obs.my-kualalumpur-1.alphaedge.tmone.com.my/cli/latest/caecloud-cli-linux-amd64.tar.gz"
           tar -zxvf caecloud-cli-linux-amd64.tar.gz
           mv $(pwd)/cae /usr/local/bin/
           cae version
-          printf "%s\n%s\n%s\n%s\n" \
-            "${{ secrets.HW_ACCESS_KEY }}" \
-            "${{ secrets.HW_SECRET_KEY }}" \
-            "${{ secrets.HW_SECRET_KEY }}" \
-            "${{ secrets.HW_LOCATION   }}" | cae configure init
+          cat <<EOF > ~/.usr/local/bin/config.json
+          {
+            "name": "default",
+            "mode": "AKSK",
+            "accessKeyId": "${{ secrets.HW_ACCESS_KEY }}",
+            "secretAccessKey": "${{ secrets.HW_SECRET_KEY }}",
+            "securityToken": "",
+            "region": "${{ secrets.HW_LOCATION }}",
+            "projectId": "${{ secrets.HW_PROJECT_ID }}",
+            "domainId": "",
+            "skipSecureVerify": "false",
+            "readTimeout": 10,
+            "connectTimeout": 5,
+            "retryCount": 0
+          }
+          EOF
+
+      
 
 
       - name: 'Install Linux Tools (Ansible + HW SDK)'
@@ -185,399 +193,423 @@ jobs:
            || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
            || './packer-huawei-windows' }}
 
-  #     - name: Configure Huawei Cloud CLI
-  #       run: |
-  #         echo "y" | cae configure set \
-  #           --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
-  #           --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
-  #           --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
-  #           --cli-region="${{ env.HW_LOCATION }}" \
-  #           --cli-skip-secure-verify=true
+      - name: Configure Huawei Cloud CLI
+        run: |
+          echo "y" | cae configure set \
+            --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
+            --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
+            --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-skip-secure-verify=true
         
-  #     - name: Prepare user_data with WinRM and PermitRootLogin fix
-  #       if: ${{ inputs.scan_only != true }}
-  #       run: |
-  #         if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-  #           # We pipe through sed to strip leading YAML spaces. 
-  #           # #ps1_sysnative MUST be at the exact beginning of the file!
-  #           cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
-  #         #ps1_sysnative
-  #         net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
-  #         winrm set winrm/config/service/auth '@{Basic="true"; Kerberos="false"; Negotiate="false"}'
-  #         winrm quickconfig -q
-  #         winrm set winrm/config/service '@{AllowUnencrypted="true"}'
-  #         winrm set winrm/config/service/auth '@{Basic="true"}'
-  #         # Ensure the firewall allows the traffic
-  #         Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
-  #         New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow
-  #         EOF
-  #           echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
-  #         else
-  #           #!/bin/bash
-  #           printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
-  #           chmod +x /tmp/hw_userdata.sh
-  #           echo "Verifying user_data contents:"
-  #           cat /tmp/hw_userdata.sh
-  #           echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
-  #         fi
+      - name: Prepare user_data with WinRM and PermitRootLogin fix
+        if: ${{ inputs.scan_only != true }}
+        run: |
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            # We pipe through sed to strip leading YAML spaces. 
+            # #ps1_sysnative MUST be at the exact beginning of the file!
+            cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
+          #ps1_sysnative
+          net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
+          winrm set winrm/config/service/auth '@{Basic="true"; Kerberos="false"; Negotiate="false"}'
+          winrm quickconfig -q
+          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+          winrm set winrm/config/service/auth '@{Basic="true"}'
+          # Ensure the firewall allows the traffic
+          Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
+          New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow
+          EOF
+            echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
+          else
+            #!/bin/bash
+            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
+            chmod +x /tmp/hw_userdata.sh
+            echo "Verifying user_data contents:"
+            cat /tmp/hw_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
+          fi
 
-  #     - name: Build Golden Image
-  #       if: ${{ inputs.scan_only != true }}
-  #       env:
-  #         PACKER_LOG: "1"
-  #       run: |
-  #         packer build \
-  #           -force \
-  #           -var "image_version=${{ needs.prepare.outputs.new_version }}" \
-  #           -var "user_data_file=${{ env.USERDATA_FILE }}" \
-  #           .
-  #       working-directory: >-
-  #         ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
-  #          || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
-  #          || './packer-huawei-windows' }}
+      - name: Build Golden Image
+        if: ${{ inputs.scan_only != true }}
+        env:
+          PACKER_LOG: "1"
+        run: |
+          packer build \
+            -force \
+            -var "image_version=${{ needs.prepare.outputs.new_version }}" \
+            -var "user_data_file=${{ env.USERDATA_FILE }}" \
+            .
+        working-directory: >-
+          ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
+           || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
+           || './packer-huawei-windows' }}
 
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # DEPLOY EPHEMERAL VM FOR SCANNING
-  #     # ──────────────────────────────────────────────────────────────────────
+      # ──────────────────────────────────────────────────────────────────────
+      # DEPLOY EPHEMERAL VM FOR SCANNING
+      # ──────────────────────────────────────────────────────────────────────
 
-  #     - name: Generate Ephemeral SSH Key
-  #       run: ssh-keygen -t ed25519 -f ~/.ssh/scanner_key -N ""
+      - name: Generate Ephemeral SSH Key
+        run: ssh-keygen -t ed25519 -f ~/.ssh/scanner_key -N ""
 
-  #     - name: Resolve Target Image Name
-  #       id: image
-  #       run: |
-  #         case "${{ matrix.os_config.os }}" in
-  #           "Huawei Rocky 9")       echo "name=${{ inputs.rocky_image_name_override   || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-  #           "Huawei Ubuntu 24.04")  echo "name=${{ inputs.ubuntu_image_name_override  || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-  #           "Huawei Windows Server 2022") echo "name=${{ inputs.windows_image_name_override || format('win2022-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-  #         esac
+      - name: Resolve Target Image Name
+        id: image
+        run: |
+          case "${{ matrix.os_config.os }}" in
+            "Huawei Rocky 9")       echo "name=${{ inputs.rocky_image_name_override   || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Ubuntu 24.04")  echo "name=${{ inputs.ubuntu_image_name_override  || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Windows Server 2022") echo "name=${{ inputs.windows_image_name_override || format('win2022-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+          esac
 
-  #     - name: Prepare user_data for Pipeline Scanner
-  #       run: |
-  #         echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
-  #         SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
-  #         if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-  #           cat << 'EOF' > /tmp/hw_scan_userdata.ps1
-  #         #ps1_sysnative
-  #         $adminKeysPath = "$env:ProgramData\ssh\administrators_authorized_keys"
-  #         Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
-  #         icacls.exe $adminKeysPath /inheritance:r /grant "*S-1-5-18:(F)" /grant "*S-1-5-32-544:(F)" | Out-Null
-  #         $sshdConfig = "$env:ProgramData\ssh\sshd_config"
-  #         (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
-  #         Restart-Service sshd -Force
-  #         EOF
-  #           sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
-  #         else
-  #           # Inject proxy settings so OpenSCAP downloads succeed on the isolated Linux scanner VM
-  #           cat << 'EOF' > /tmp/hw_scan_userdata.sh
-  #         #!/bin/bash
-  #         mkdir -p /home/sysadmin/.ssh
-  #         echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
-  #         chown -R sysadmin:sysadmin /home/sysadmin/.ssh
-  #         chmod 700 /home/sysadmin/.ssh
-  #         chmod 600 /home/sysadmin/.ssh/authorized_keys
-  #         EOF
-  #           sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
-  #           cat /tmp/hw_scan_userdata.sh
-  #         fi
+      - name: Prepare user_data for Pipeline Scanner
+        run: |
+          echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
+          SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            cat << 'EOF' > /tmp/hw_scan_userdata.ps1
+          #ps1_sysnative
+          $adminKeysPath = "$env:ProgramData\ssh\administrators_authorized_keys"
+          Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          icacls.exe $adminKeysPath /inheritance:r /grant "*S-1-5-18:(F)" /grant "*S-1-5-32-544:(F)" | Out-Null
+          $sshdConfig = "$env:ProgramData\ssh\sshd_config"
+          (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
+          Restart-Service sshd -Force
+          EOF
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
+          else
+            # Inject proxy settings so OpenSCAP downloads succeed on the isolated Linux scanner VM
+            cat << 'EOF' > /tmp/hw_scan_userdata.sh
+          #!/bin/bash
+          mkdir -p /home/sysadmin/.ssh
+          echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
+          chown -R sysadmin:sysadmin /home/sysadmin/.ssh
+          chmod 700 /home/sysadmin/.ssh
+          chmod 600 /home/sysadmin/.ssh/authorized_keys
+          EOF
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
+            cat /tmp/hw_scan_userdata.sh
+          fi
 
-  #     - name: Deploy Ephemeral VM
-  #       run: |
-  #         IMAGE_NAME="${{ steps.image.outputs.name }}"
-  #         echo "Resolving IMS image ID for: $IMAGE_NAME"
+      - name: Deploy Ephemeral VM
+        run: |
+          IMAGE_NAME="${{ steps.image.outputs.name }}"
+          echo "Resolving IMS image ID for: $IMAGE_NAME"
 
-  #         cae IMS ListImages \
-  #           --cli-region="${{ env.HW_LOCATION }}" \
-  #           --cli-warning=false \
-  #           > /tmp/ims_list_output.json 2>/dev/null || true
+          cae IMS ListImages \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            > /tmp/ims_list_output.json 2>/dev/null || true
 
-  #         HW_IMAGE_ID=$(jq -r --arg name "$IMAGE_NAME" \
-  #           '.images[] | select(.name == $name) | .id // empty' \
-  #           /tmp/ims_list_output.json | head -1)
+          HW_IMAGE_ID=$(jq -r --arg name "$IMAGE_NAME" \
+            '.images[] | select(.name == $name) | .id // empty' \
+            /tmp/ims_list_output.json | head -1)
 
-  #         if [[ -z "$HW_IMAGE_ID" ]]; then
-  #           echo "ERROR: No image found with name '$IMAGE_NAME'"
-  #           jq -r '.images[] | "\(.name) (\(.id))"' /tmp/ims_list_output.json || true
-  #           exit 1
-  #         fi
+          if [[ -z "$HW_IMAGE_ID" ]]; then
+            echo "ERROR: No image found with name '$IMAGE_NAME'"
+            jq -r '.images[] | "\(.name) (\(.id))"' /tmp/ims_list_output.json || true
+            exit 1
+          fi
 
-  #         echo "Resolved: $IMAGE_NAME → $HW_IMAGE_ID"
-  #         echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
+          echo "Resolved: $IMAGE_NAME → $HW_IMAGE_ID"
+          echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
 
-  #         EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
+          EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
 
-  #         if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-  #           ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.ps1)
-  #         else
-  #           ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
-  #         fi
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.ps1)
+          else
+            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
+          fi
 
-  #         cae ECS CreateServers \
-  #           --cli-region="${{ env.HW_LOCATION }}" \
-  #           --cli-warning=false \
-  #           --server.name="$EPHEMERAL_NAME" \
-  #           --server.flavorRef="c6.large.2" \
-  #           --server.imageRef="$HW_IMAGE_ID" \
-  #           --server.vpcid="${{ secrets.HW_VPC_ID }}" \
-  #           --server.nics.1.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
-  #           --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
-  #           --server.root_volume.volumetype="SAS" \
-  #           --server.root_volume.size=40 \
-  #           --server.publicip.eip.iptype="5_bgp" \
-  #           --server.publicip.eip.bandwidth.size=5 \
-  #           --server.publicip.eip.bandwidth.sharetype="PER" \
-  #           --server.publicip.eip.bandwidth.chargemode="traffic" \
-  #           --server.publicip.delete_on_termination="true" \
-  #           --server.user_data="$ENCODED_USER_DATA" \
-  #           > create_server_output.json 2>&1
+          cae ECS CreateServers \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --server.name="$EPHEMERAL_NAME" \
+            --server.flavorRef="c6.large.2" \
+            --server.imageRef="$HW_IMAGE_ID" \
+            --server.vpcid="${{ secrets.HW_VPC_ID }}" \
+            --server.nics.1.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
+            --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
+            --server.root_volume.volumetype="SAS" \
+            --server.user_data="$ENCODED_USER_DATA" \
+            > create_server_output.json 2>&1
 
-  #         echo "--- Raw CreateServers response ---"
-  #         cat create_server_output.json
+          echo "--- Raw CreateServers response ---"
+          cat create_server_output.json
 
-  #         if ! jq -e '.job_id' create_server_output.json > /dev/null 2>&1; then
-  #           echo "ERROR: CreateServers API call failed."
-  #           exit 1
-  #         fi
+          if ! jq -e '.job_id' create_server_output.json > /dev/null 2>&1; then
+            echo "ERROR: CreateServers API call failed."
+            exit 1
+          fi
 
-  #         HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
-  #         echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
-  #         echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
-  #         echo "Server ID saved for teardown: $HW_SERVER_ID"
+          HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
+          echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
+          echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
+          echo "Server ID saved for teardown: $HW_SERVER_ID"
 
-  #         HW_JOB_ID=$(jq -r '.job_id' create_server_output.json)
-  #         echo "Job submitted: $HW_JOB_ID. Waiting for completion..."
+          HW_JOB_ID=$(jq -r '.job_id' create_server_output.json)
+          echo "Job submitted: $HW_JOB_ID. Waiting for completion..."
 
-  #         for i in {1..30}; do
-  #           JOB_OUTPUT=$(cae ECS ShowJob \
-  #             --cli-region="${{ env.HW_LOCATION }}" \
-  #             --cli-warning=false \
-  #             --cli-output=json \
-  #             --job_id="$HW_JOB_ID" \
-  #             2>/dev/null)
+          for i in {1..30}; do
+            JOB_OUTPUT=$(cae ECS ShowJob \
+              --cli-region="${{ env.HW_LOCATION }}" \
+              --cli-warning=false \
+              --cli-output=json \
+              --job_id="$HW_JOB_ID" \
+              2>/dev/null)
 
-  #           if [[ "$i" -eq 1 ]]; then
-  #             echo "--- Raw ShowJob response (attempt 1) ---"
-  #             echo "$JOB_OUTPUT"
-  #           fi
+            if [[ "$i" -eq 1 ]]; then
+              echo "--- Raw ShowJob response (attempt 1) ---"
+              echo "$JOB_OUTPUT"
+            fi
 
-  #           STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status // empty' 2>/dev/null)
-  #           echo "Job status: $STATUS (attempt $i/30)"
+            STATUS=$(echo "$JOB_OUTPUT" | jq -r '.status // empty' 2>/dev/null)
+            echo "Job status: $STATUS (attempt $i/30)"
 
-  #           if [[ "$STATUS" == "SUCCESS" ]]; then 
-  #             echo "VM is ACTIVE. Waiting 30s for cloud-init to complete..."
-  #             sleep 30
-  #             break; fi
-  #           if [[ "$STATUS" == "FAIL" ]]; then
-  #             echo "ERROR: ECS CreateServers job failed."
-  #             echo "$JOB_OUTPUT"
-  #             exit 1
-  #           fi
+            if [[ "$STATUS" == "SUCCESS" ]]; then 
+              echo "VM is ACTIVE. Waiting 30s for cloud-init and NIC propagation..."
+              sleep 30
+              break
+            fi
+            
+            if [[ "$STATUS" == "FAIL" ]]; then
+              echo "ERROR: ECS CreateServers job failed."
+              echo "$JOB_OUTPUT"
+              exit 1
+            fi
 
-  #           sleep 10
-  #           if [[ "$i" -eq 30 ]]; then
-  #             echo "ERROR: Timed out waiting for VM creation."
-  #             exit 1
-  #           fi
-  #         done
+            sleep 10
+            if [[ "$i" -eq 30 ]]; then
+              echo "ERROR: Timed out waiting for VM creation."
+              exit 1
+            fi
+          done
 
-  #         cae ECS ShowServer \
-  #           --cli-region="${{ env.HW_LOCATION }}" \
-  #           --cli-warning=false \
-  #           --cli-output=json \
-  #           --project_id="${{ secrets.HW_PROJECT_ID }}" \
-  #           --server_id="$HW_SERVER_ID" \
-  #           > /tmp/show_server_output.json 2>/dev/null
+          echo "Fetching server details to retrieve Port ID..."
+          cae ECS ShowServer \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --cli-output=json \
+            --project_id="${{ secrets.HW_PROJECT_ID }}" \
+            --server_id="$HW_SERVER_ID" \
+            > /tmp/show_server_output.json 2>/dev/null
 
-  #         # -----------------------------------------------------------------
-  #         # Fetch the Public (Floating) IP assigned to the instance
-  #         # -----------------------------------------------------------------
-  #         VM_IP=$(jq -r '.server.addresses | to_entries[0].value[] | select(."OS-EXT-IPS:type"=="floating") | .addr // empty' /tmp/show_server_output.json | head -1)
+          ECS_PORT_ID=$(jq -r '.server.addresses | map(.[0].port) | .[0] // empty' /tmp/show_server_output.json)
 
-  #         echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-  #         echo "Ephemeral VM Public IP: $VM_IP"
+          if [[ -z "$ECS_PORT_ID" ]]; then
+            echo "ERROR: Could not find Port ID for server $HW_SERVER_ID"
+            cat /tmp/show_server_output.json
+            exit 1
+          fi
 
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # WAIT FOR SSH
-  #     # ──────────────────────────────────────────────────────────────────────
+          echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
+          cae VPC AssociatePublicips \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --publicip.id="${{ secrets.HW_EXISTING_EIP_ID }}" \
+            --publicip.port_id="$ECS_PORT_ID"
 
-  #     - name: Wait for SSH Connection
-  #       run: |
-  #         for i in {1..20}; do
-  #           if ssh -o StrictHostKeyChecking=no \
-  #                 -o ConnectTimeout=5 \
-  #                 -i ~/.ssh/scanner_key \
-  #                 sysadmin@"$VM_IP" exit 0 2>/dev/null; then
-  #             echo "SSH is up after attempt $i."
-  #             break
-  #           fi
-  #           echo "Attempt $i/20 — SSH not ready, retrying in 10s..."
-  #           sleep 10
-  #           if [ "$i" -eq 20 ]; then
-  #             echo "ERROR: SSH never became available after 200s."
-  #             exit 1
-  #           fi
-  #         done
+          echo "EIP Successfully bound. Resolving IP address..."
+          EIP_DETAILS=$(cae VPC ShowPublicip \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --cli-output=json \
+            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
+            2>/dev/null)
 
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # SCAN PHASE
-  #     # ──────────────────────────────────────────────────────────────────────
+          # -----------------------------------------------------------------
+          # Fetch the Public (Floating) IP assigned to the instance
+          # -----------------------------------------------------------------
+          VM_IP=$(echo "$EIP_DETAILS" | jq -r '.publicip.public_ip_address // empty')
 
-  #     - name: Run Cinc Auditor & Generate Multi-Format Reports (Windows)
-  #       if: ${{ matrix.os_config.os == 'Huawei Windows Server 2022' }}
-  #       run: |
-  #         echo "Installing Cinc Auditor..."
-  #         curl -sL https://omnitruck.cinc.sh/install.sh | sudo bash -s -- -P cinc-auditor
+          if [[ -z "$VM_IP" ]]; then
+            echo "ERROR: Failed to retrieve public IP address from EIP details."
+            exit 1
+          fi
+
+          echo "VM_IP=$VM_IP" >> $GITHUB_ENV
+          echo "Ephemeral VM Public IP: $VM_IP"
+
+      # ──────────────────────────────────────────────────────────────────────
+      # WAIT FOR SSH
+      # ──────────────────────────────────────────────────────────────────────
+
+      - name: Wait for SSH Connection
+        run: |
+          for i in {1..20}; do
+            if ssh -o StrictHostKeyChecking=no \
+                  -o ConnectTimeout=5 \
+                  -i ~/.ssh/scanner_key \
+                  sysadmin@"$VM_IP" exit 0 2>/dev/null; then
+              echo "SSH is up after attempt $i."
+              break
+            fi
+            echo "Attempt $i/20 — SSH not ready, retrying in 10s..."
+            sleep 10
+            if [ "$i" -eq 20 ]; then
+              echo "ERROR: SSH never became available after 200s."
+              exit 1
+            fi
+          done
+
+      # ──────────────────────────────────────────────────────────────────────
+      # SCAN PHASE
+      # ──────────────────────────────────────────────────────────────────────
+
+      - name: Run Cinc Auditor & Generate Multi-Format Reports (Windows)
+        if: ${{ matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        run: |
+          echo "Installing Cinc Auditor..."
+          curl -sL https://omnitruck.cinc.sh/install.sh | sudo bash -s -- -P cinc-auditor
           
-  #         echo "Executing Cinc Auditor against hardened Windows Image..."
-  #         for i in {1..10}; do
-  #           if cinc-auditor exec https://github.com/dev-sec/windows-baseline \
-  #             -t ssh://sysadmin@${{ env.VM_IP }} \
-  #             -i ~/.ssh/scanner_key \
-  #             --input server_role=member_server \
-  #             --input domain_joined=false \
-  #             --backend-cache \
-  #             --reporter html:./hw-windows-cis-report.html json:./hw-windows-cis-report.json cli; then
+          echo "Executing Cinc Auditor against hardened Windows Image..."
+          for i in {1..10}; do
+            if cinc-auditor exec https://github.com/dev-sec/windows-baseline \
+              -t ssh://sysadmin@${{ env.VM_IP }} \
+              -i ~/.ssh/scanner_key \
+              --input server_role=member_server \
+              --input domain_joined=false \
+              --backend-cache \
+              --reporter html:./hw-windows-cis-report.html json:./hw-windows-cis-report.json cli; then
               
-  #             echo "Cinc Auditor completed successfully."
-  #             break
-  #           else
-  #             echo "Warning: Authentication dropped. Retrying in 15 seconds..."
-  #             sleep 15
-  #           fi
-  #         done
+              echo "Cinc Auditor completed successfully."
+              break
+            else
+              echo "Warning: Authentication dropped. Retrying in 15 seconds..."
+              sleep 15
+            fi
+          done
 
-  #     - name: Run Huawei Rocky OpenSCAP & Download Report
-  #       if: ${{ matrix.os_config.os == 'Huawei Rocky 9' }}
-  #       run: |
-  #         ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
-  #             sysadmin@${{ env.VM_IP }} << 'EOF'
-  #           sudo dnf install -y openscap-scanner scap-security-guide
-  #           sudo oscap xccdf eval \
-  #             --profile xccdf_org.ssgproject.content_profile_cis_server_l1 \
-  #             --report /tmp/hw-rocky-cis-report.html \
-  #             /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml || true
-  #           sudo cp /tmp/hw-rocky-cis-report.html /home/sysadmin/
-  #           sudo chown sysadmin:sysadmin /home/sysadmin/hw-rocky-cis-report.html
-  #         EOF
-  #         scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
-  #           sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-rocky-cis-report.html \
-  #           ./hw-rocky-cis-report.html
+      - name: Run Huawei Rocky OpenSCAP & Download Report
+        if: ${{ matrix.os_config.os == 'Huawei Rocky 9' }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
+              sysadmin@${{ env.VM_IP }} << 'EOF'
+            sudo dnf install -y openscap-scanner scap-security-guide
+            sudo oscap xccdf eval \
+              --profile xccdf_org.ssgproject.content_profile_cis_server_l1 \
+              --report /tmp/hw-rocky-cis-report.html \
+              /usr/share/xml/scap/ssg/content/ssg-rl9-ds.xml || true
+            sudo cp /tmp/hw-rocky-cis-report.html /home/sysadmin/
+            sudo chown sysadmin:sysadmin /home/sysadmin/hw-rocky-cis-report.html
+          EOF
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
+            sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-rocky-cis-report.html \
+            ./hw-rocky-cis-report.html
 
-  #     - name: Run Huawei Ubuntu 24.04 OpenSCAP & Download Report
-  #       if: ${{ matrix.os_config.os == 'Huawei Ubuntu 24.04' }}
-  #       run: |
-  #         ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
-  #             sysadmin@${{ env.VM_IP }} << 'EOF'
-  #           sudo apt-get update -qq
-  #           sudo apt-get install -y openscap-scanner unzip wget
-  #           wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.81/scap-security-guide-0.1.81.zip
-  #           unzip -q scap-security-guide-0.1.81.zip
-  #           sudo oscap xccdf eval \
-  #             --profile xccdf_org.ssgproject.content_profile_cis_level1_server \
-  #             --report /tmp/hw-ubuntu-2404-cis-report.html \
-  #             scap-security-guide-0.1.81/ssg-ubuntu2404-ds.xml || true
-  #           sudo cp /tmp/hw-ubuntu-2404-cis-report.html /home/sysadmin/
-  #           sudo chown sysadmin:sysadmin /home/sysadmin/hw-ubuntu-2404-cis-report.html
-  #         EOF
-  #         scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
-  #           sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-ubuntu-2404-cis-report.html \
-  #           ./hw-ubuntu-2404-cis-report.html
+      - name: Run Huawei Ubuntu 24.04 OpenSCAP & Download Report
+        if: ${{ matrix.os_config.os == 'Huawei Ubuntu 24.04' }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
+              sysadmin@${{ env.VM_IP }} << 'EOF'
+            sudo apt-get update -qq
+            sudo apt-get install -y openscap-scanner unzip wget
+            wget -q https://github.com/ComplianceAsCode/content/releases/download/v0.1.81/scap-security-guide-0.1.81.zip
+            unzip -q scap-security-guide-0.1.81.zip
+            sudo oscap xccdf eval \
+              --profile xccdf_org.ssgproject.content_profile_cis_level1_server \
+              --report /tmp/hw-ubuntu-2404-cis-report.html \
+              scap-security-guide-0.1.81/ssg-ubuntu2404-ds.xml || true
+            sudo cp /tmp/hw-ubuntu-2404-cis-report.html /home/sysadmin/
+            sudo chown sysadmin:sysadmin /home/sysadmin/hw-ubuntu-2404-cis-report.html
+          EOF
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/scanner_key \
+            sysadmin@${{ env.VM_IP }}:/home/sysadmin/hw-ubuntu-2404-cis-report.html \
+            ./hw-ubuntu-2404-cis-report.html
 
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # TEARDOWN
-  #     # ──────────────────────────────────────────────────────────────────────
+      # ──────────────────────────────────────────────────────────────────────
+      # TEARDOWN
+      # ──────────────────────────────────────────────────────────────────────
 
-  #     - name: Prune Empty Reports (Failsafe)
-  #       if: always()
-  #       run: |
-  #         echo "Removing any 0-byte reports to prevent GitHub Release API errors..."
-  #         find . -maxdepth 1 -name "*-cis-report.*" -type f -size 0 -print -delete
+      - name: Prune Empty Reports (Failsafe)
+        if: always()
+        run: |
+          echo "Removing any 0-byte reports to prevent GitHub Release API errors..."
+          find . -maxdepth 1 -name "*-cis-report.*" -type f -size 0 -print -delete
 
-  #     - name: Destroy Ephemeral VM (Huawei)
-  #       if: always() && env.HW_SERVER_ID != ''
-  #       run: |
-  #         cae ECS DeleteServers \
-  #           --cli-region="${{ env.HW_LOCATION }}" \
-  #           --cli-warning=false \
-  #           --servers.1.id="$HW_SERVER_ID" \
-  #           --delete_publicip=true \
-  #           --delete_volume=true
-  #         echo "Ephemeral VM $HW_SERVER_ID deletion requested."
+      - name: Destroy Ephemeral VM (Huawei)
+        if: always() && env.HW_SERVER_ID != ''
+        run: |
+          cae ECS DeleteServers \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --servers.1.id="$HW_SERVER_ID" \
+            --delete_volume=true
+          echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
-  #     - name: Upload Report Artifact
-  #       if: always()
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: ${{ env.VM_SLUG }}-report
-  #         path: ./*-cis-report.*
+      - name: Upload Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.VM_SLUG }}-report
+          path: ./*-cis-report.*
 
-  #     # ──────────────────────────────────────────────────────────────────────
-  #     # RUNNER CLEANUP
-  #     # ──────────────────────────────────────────────────────────────────────
+      # ──────────────────────────────────────────────────────────────────────
+      # RUNNER CLEANUP
+      # ──────────────────────────────────────────────────────────────────────
 
-  #     - name: Clean up Self-Hosted Runner State
-  #       if: always()
-  #       run: |
-  #         echo "Cleaning up temporary files to prevent state contamination..."
-  #         rm -f ~/.ssh/scanner_key ~/.ssh/scanner_key.pub
-  #         rm -f ./*-cis-report.*
-  #         rm -f ./crash.log
-  #         echo "Runner cleanup complete."
+      - name: Clean up Self-Hosted Runner State
+        if: always()
+        run: |
+          echo "Cleaning up temporary files to prevent state contamination..."
+          rm -f ~/.ssh/scanner_key ~/.ssh/scanner_key.pub
+          rm -f ./*-cis-report.*
+          rm -f ./crash.log
+          echo "Runner cleanup complete."
 
-  # # ============================================================
-  # # STAGE 3: PUBLISH (Tag & Release)
-  # # ============================================================
-  # release:
-  #   name: Publish Huawei DevSecOps Release
-  #   needs: [prepare, matrix-factory]
-  #   runs-on: ubuntu-latest
-  #   if: ${{ !cancelled() && !failure() }}
-  #   steps:
-  #     - name: Download All Reports
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         path: ./reports
-  #         merge-multiple: true
+  # ============================================================
+  # STAGE 3: PUBLISH (Tag & Release)
+  # ============================================================
+  release:
+    name: Publish Huawei DevSecOps Release
+    needs: [prepare, matrix-factory]
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && !failure() }}
+    steps:
+      - name: Download All Reports
+        uses: actions/download-artifact@v4
+        with:
+          path: ./reports
+          merge-multiple: true
 
-  #     - name: Push Official Git Tag
-  #       if: ${{ inputs.scan_only != true }}
-  #       uses: mathieudutour/github-tag-action@v6.2
-  #       with:
-  #         github_token: ${{ secrets.GITHUB_TOKEN }}
-  #         tag_prefix: hw-v
-  #         custom_tag: ${{ needs.prepare.outputs.new_version }}
+      - name: Push Official Git Tag
+        if: ${{ inputs.scan_only != true }}
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: hw-v
+          custom_tag: ${{ needs.prepare.outputs.new_version }}
 
-  #     - name: Publish Golden Image Release
-  #       if: ${{ inputs.scan_only != true }}
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         tag_name: hw-v${{ needs.prepare.outputs.new_version }}
-  #         name: "Huawei Golden Image Release v${{ needs.prepare.outputs.new_version }}"
-  #         body: |
-  #           ## Huawei Cloud Golden Image Factory — v${{ needs.prepare.outputs.new_version }}
+      - name: Publish Golden Image Release
+        if: ${{ inputs.scan_only != true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hw-v${{ needs.prepare.outputs.new_version }}
+          name: "Huawei Golden Image Release v${{ needs.prepare.outputs.new_version }}"
+          body: |
+            ## Huawei Cloud Golden Image Factory — v${{ needs.prepare.outputs.new_version }}
 
-  #           Automated CIS Level 1 Compliance Reports for all built Huawei Cloud images.
+            Automated CIS Level 1 Compliance Reports for all built Huawei Cloud images.
 
-  #           | Image | Benchmark | Profile |
-  #           |-------|-----------|---------|
-  #           | Huawei Rocky Linux 9 | CIS AlmaLinux/Rocky Linux 9 | Level 1 Server |
-  #           | Huawei Ubuntu 24.04 | CIS Ubuntu Linux 24.04 LTS | Level 1 Server |
+            | Image | Benchmark | Profile |
+            |-------|-----------|---------|
+            | Huawei Rocky Linux 9 | CIS AlmaLinux/Rocky Linux 9 | Level 1 Server |
+            | Huawei Ubuntu 24.04 | CIS Ubuntu Linux 24.04 LTS | Level 1 Server |
 
-  #           **IMS image version:** `${{ needs.prepare.outputs.new_version }}`
-  #           **Region:** `${{ inputs.hw_region || vars.HW_LOCATION }}`
-  #         fail_on_unmatched_files: false
-  #         files: ./reports/*-cis-report.*
+            **IMS image version:** `${{ needs.prepare.outputs.new_version }}`
+            **Region:** `${{ inputs.hw_region || vars.HW_LOCATION }}`
+          fail_on_unmatched_files: false
+          files: ./reports/*-cis-report.*
 
-  #     - name: Publish Ad-Hoc Scan Report
-  #       if: ${{ inputs.scan_only == true }}
-  #       uses: softprops/action-gh-release@v2
-  #       with:
-  #         tag_name: hw-scan-report-${{ github.run_number }}
-  #         name: "Huawei Ad-Hoc Compliance Scan #${{ github.run_number }}"
-  #         body: |
-  #           Manual CIS Level 1 compliance evaluation against existing Huawei IMS images.
-  #           *(No new image versions were built during this run.)*
-  #         fail_on_unmatched_files: false
-  #         files: |
-  #           ./reports/*-cis-report.html
-  #           ./reports/*-cis-report.json
+      - name: Publish Ad-Hoc Scan Report
+        if: ${{ inputs.scan_only == true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hw-scan-report-${{ github.run_number }}
+          name: "Huawei Ad-Hoc Compliance Scan #${{ github.run_number }}"
+          body: |
+            Manual CIS Level 1 compliance evaluation against existing Huawei IMS images.
+            *(No new image versions were built during this run.)*
+          fail_on_unmatched_files: false
+          files: |
+            ./reports/*-cis-report.html
+            ./reports/*-cis-report.json
