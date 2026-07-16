@@ -37,8 +37,10 @@ source "huaweicloud-ecs" "windows_cis" {
   communicator   = "winrm"
   winrm_username = "Administrator"
   winrm_password = var.windows_admin_pass
-  winrm_use_ssl  = false
+  winrm_use_ssl  = true
   winrm_insecure = true
+  winrm_use_ntlm = true
+  winrm_port     = 5986
   winrm_timeout  = "30m"
 
   # Huawei requires the password to be set for the Administrator account
@@ -118,6 +120,14 @@ build {
   provisioner "powershell" {
     inline = [
       "C:\\Program` Files\\Cloudbase` Solutions\\Cloudbase-Init\\bin\\Invoke-Sysprep.ps1 -SysprepPath 'C:\\Windows\\System32\\Sysprep\\Sysprep.exe'"
+    ]
+  }
+
+  provisioner "powershell" {
+    inline = [
+      "Remove-Item -Path WSMan:\\Localhost\\Listener\\* -Recurse -Force -ErrorAction SilentlyContinue",
+      "Remove-NetFirewallRule -DisplayName 'WinRM-HTTPS' -ErrorAction SilentlyContinue",
+      "Get-ChildItem Cert:\\LocalMachine\\My | Where-Object {$_.Subject -eq 'CN=packer-build'} | Remove-Item -Force"
     ]
   }
 }

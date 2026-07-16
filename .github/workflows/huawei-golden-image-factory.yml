@@ -193,14 +193,30 @@ jobs:
             # #ps1_sysnative MUST be at the exact beginning of the file!
             cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
           #ps1_sysnative
-          net user Administrator "${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}"
-          winrm set winrm/config/service/auth '@{Basic="true"; Kerberos="false"; Negotiate="false"}'
-          winrm quickconfig -q
-          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
-          winrm set winrm/config/service/auth '@{Basic="true"}'
-          # Ensure the firewall allows the traffic
-          Enable-NetFirewallRule -DisplayGroup "Windows Remote Management"
-          New-NetFirewallRule -Name "WinRM-Custom" -DisplayName "WinRM HTTP Pipeline" -Direction Inbound -LocalPort 5985 -Protocol TCP -Action Allow
+          $ErrorActionPreference = "Stop"
+
+          # Remove the default HTTP listener so nothing falls back to Basic/unencrypted
+          Get-ChildItem WSMan:\Localhost\Listener |
+              Where-Object { $_.Keys -contains "Transport=HTTP" } |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Self-signed cert for the HTTPS listener (fine for build-time use;
+          # winrm_insecure = true on the Packer side skips validation)
+          $Cert = New-SelfSignedCertificate -CertstoreLocation Cert:\LocalMachine\My -DnsName "packer-build"
+
+          New-Item -Path WSMan:\LocalHost\Listener -Transport HTTPS -Address * `
+              -CertificateThumbPrint $Cert.Thumbprint -Force
+
+          # Lock down auth to NTLM only — no Basic, no unencrypted traffic
+          winrm set winrm/config/service '@{AllowUnencrypted="false"}'
+          winrm set winrm/config/service/auth '@{Basic="false"}'
+          winrm set winrm/config/service/auth '@{Negotiate="true"}'
+          winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
+
+          New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow
+
+          Set-Service -Name WinRM -StartupType Automatic
+          Start-Service WinRM
           EOF
             echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
           else
