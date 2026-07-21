@@ -167,6 +167,7 @@ jobs:
         run: |
           echo "Roles missing. Installing from requirements.yml..."
           ansible-galaxy install -r requirements.yml --roles-path roles/
+          ansible-galaxy role install git+https://github.com/ansible-lockdown/Windows-2022-CIS.git --roles-path roles/
 
       - name: Debug - show CIS role defaults
         run: |
