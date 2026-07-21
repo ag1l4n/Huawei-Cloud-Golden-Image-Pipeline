@@ -13,6 +13,10 @@
   # Packer doesn't get locked out during the windows-restart and sysprep steps.
   # =========================================================================
   post_tasks:
+    - name: Reboot to apply CIS changes that require a restart
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+
     - name: "CI FIX: Re-enable remote UAC tokens for Packer"
       win_regedit:
         path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
