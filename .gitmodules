@@ -1,0 +1,3 @@
+[submodule "ansible/roles/windows_2022_cis"]
+	path = ansible/roles/windows_2022_cis
+	url = https://github.com/ansible-lockdown/Windows-2022-CIS.git
