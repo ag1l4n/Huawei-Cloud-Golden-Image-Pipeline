@@ -103,7 +103,7 @@ build {
     ]
   }
 
-  # 6. Inject the CIS scripts from your existing Azure directory
+  # 6. Inject the CIS scripts from your existing directory
   provisioner "file" {
     source      = "${path.root}/../packer-huawei-windows/files/"
     destination = "C:/Windows/Setup/Scripts/"
@@ -121,6 +121,5 @@ build {
       "C:\\Program` Files\\Cloudbase` Solutions\\Cloudbase-Init\\bin\\Invoke-Sysprep.ps1 -SysprepPath 'C:\\Windows\\System32\\Sysprep\\Sysprep.exe'"
     ]
     skip_clean        = true
-    expect_disconnect = true
   }
 }
