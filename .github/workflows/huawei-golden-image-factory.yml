@@ -137,6 +137,7 @@ jobs:
           sudo apt-get update -qq
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user 'ansible>=10.0.0,<11.0.0'
+          pip install "pywinrm>=0.3.0"
           curl -LO "https://tm-cli.obs.my-kualalumpur-1.alphaedge.tmone.com.my/cli/latest/caecloud-cli-linux-amd64.tar.gz"
           tar -zxvf caecloud-cli-linux-amd64.tar.gz
           sudo mv $(pwd)/cae /usr/local/bin/
