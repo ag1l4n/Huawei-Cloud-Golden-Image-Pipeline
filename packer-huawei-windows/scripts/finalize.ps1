@@ -52,19 +52,19 @@ Unregister-ScheduledTask -TaskName 'RestoreCISPolicies' -Confirm:$false -ErrorAc
 $sysPolicy = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
 Grant-KeyAccess $sysPolicy
 
-# Wait for Azure VM Agent to provision the local admin account before applying CIS policy
-Write-Output "Waiting for Azure VM Agent to provision the sysadmin account..."
+# Wait for Cloudbase-Init to provision the local Administrator account before applying CIS policy
+Write-Output "Waiting for Cloudbase-Init to provision the Administrator account..."
 $accountWait = 0
 while ($accountWait -lt 600) {
-  if (Get-LocalUser -Name 'sysadmin' -ErrorAction SilentlyContinue) {
-    Write-Output "sysadmin account found after $accountWait seconds. Proceeding with CIS policy."
+  if (Get-LocalUser -Name 'Administrator' -ErrorAction SilentlyContinue) {
+    Write-Output "Administrator account found after $accountWait seconds. Proceeding with CIS policy."
     break
   }
-  Write-Output "sysadmin not yet provisioned... ($accountWait s)"
+  Write-Output "Administrator not yet provisioned... ($accountWait s)"
   Start-Sleep -Seconds 15
   $accountWait += 15
   if ($accountWait -ge 600) {
-    Write-Output "WARNING: sysadmin account never appeared after 600s. Proceeding anyway."
+    Write-Output "WARNING: Administrator account never appeared after 600s. Proceeding anyway."
   }
 }
 
@@ -131,5 +131,4 @@ foreach ($path in $winrmPaths) {
     Set-Reg $path "AllowUnencryptedTraffic" 0
 }
 
-# Sysprep
-Start-Process -FilePath "$env:SystemRoot\System32\Sysprep\Sysprep.exe" -ArgumentList "/oobe /generalize /quiet /quit /mode:vm" -Wait
+Write-Output "finalize.ps1 complete. WinRM registry policy applied; Sysprep will be triggered by the dedicated Cloudbase-Init provisioner step."

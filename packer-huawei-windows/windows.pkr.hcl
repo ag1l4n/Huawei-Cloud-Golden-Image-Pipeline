@@ -80,8 +80,8 @@ build {
       "-e", "ansible_winrm_scheme=https",
       "-e", "ansible_winrm_transport=ntlm",
       "-e", "ansible_winrm_server_cert_validation=ignore",
-      "-e", "ansible_winrm_operation_timeout_sec=120",
-      "-e", "ansible_winrm_read_timeout_sec=150",
+      "-e", "ansible_winrm_operation_timeout_sec=300",
+      "-e", "ansible_winrm_read_timeout_sec=330",
       "--skip-tags", "winrm_connectivity",
       "-e", "@./../ansible/cis-overrides.yml",
     ]
@@ -109,23 +109,18 @@ build {
     destination = "C:/Windows/Setup/Scripts/"
   }
 
-  # 7. Apply WinRM-disabling controls via direct registry writes
-  provisioner "powershell" { 
-    script = "${path.root}/../packer-huawei-windows/scripts/finalize.ps1"
-  }
-
-  # Huawei requires cloudbase-init to be reset for image generation
   provisioner "powershell" {
-    inline = [
-      "C:\\Program` Files\\Cloudbase` Solutions\\Cloudbase-Init\\bin\\Invoke-Sysprep.ps1 -SysprepPath 'C:\\Windows\\System32\\Sysprep\\Sysprep.exe'"
-    ]
+    script = "${path.root}/../packer-huawei-windows/scripts/finalize.ps1"
   }
 
   provisioner "powershell" {
     inline = [
       "Remove-Item -Path WSMan:\\Localhost\\Listener\\* -Recurse -Force -ErrorAction SilentlyContinue",
       "Remove-NetFirewallRule -DisplayName 'WinRM-HTTPS' -ErrorAction SilentlyContinue",
-      "Get-ChildItem Cert:\\LocalMachine\\My | Where-Object {$_.Subject -eq 'CN=packer-build'} | Remove-Item -Force"
+      "Get-ChildItem Cert:\\LocalMachine\\My | Where-Object {$_.Subject -eq 'CN=packer-build'} | Remove-Item -Force",
+      "C:\\Program` Files\\Cloudbase` Solutions\\Cloudbase-Init\\bin\\Invoke-Sysprep.ps1 -SysprepPath 'C:\\Windows\\System32\\Sysprep\\Sysprep.exe'"
     ]
+    skip_clean        = true
+    expect_disconnect = true
   }
 }
