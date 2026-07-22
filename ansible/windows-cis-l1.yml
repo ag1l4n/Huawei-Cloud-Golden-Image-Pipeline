@@ -6,6 +6,83 @@
       vars:
         win_2022_cis_level_1: true
         win_2022_cis_level_2: false
+  tasks:
+    - block:
+        - name: Run CIS hardening role
+          ansible.builtin.include_role:
+            name: windows_2022_cis
+        - name: Mark CIS role as completed
+          ansible.builtin.set_fact:
+            cis_role_completed: true
+            cacheable: true
+      rescue:
+        - name: Mark attempt as failed (will retry next play)
+          ansible.builtin.set_fact:
+            cis_role_completed: false
+            cacheable: true
+
+- name: "CIS Hardening - Attempt 2 (retry after disconnect)"
+  hosts: all
+  gather_facts: false
+  vars:
+    win_2022_cis_level_1: true
+    win_2022_cis_level_2: false
+  tasks:
+    - name: Pause to let WinRM/service recover before reconnecting
+      ansible.builtin.pause:
+        seconds: 20
+      delegate_to: localhost
+      when: not (cis_role_completed | default(false))
+
+    - block:
+        - name: Retry CIS hardening role
+          ansible.builtin.include_role:
+            name: windows_2022_cis
+          when: not (cis_role_completed | default(false))
+        - name: Mark CIS role as completed
+          ansible.builtin.set_fact:
+            cis_role_completed: true
+            cacheable: true
+          when: not (cis_role_completed | default(false))
+      rescue:
+        - ansible.builtin.set_fact:
+            cis_role_completed: false
+            cacheable: true
+
+- name: "CIS Hardening - Attempt 3 (final retry)"
+  hosts: all
+  gather_facts: false
+  vars:
+    win_2022_cis_level_1: true
+    win_2022_cis_level_2: false
+  tasks:
+    - name: Pause before final retry
+      ansible.builtin.pause:
+        seconds: 20
+      delegate_to: localhost
+      when: not (cis_role_completed | default(false))
+
+    - name: Final retry of CIS hardening role
+      ansible.builtin.include_role:
+        name: windows_2022_cis
+      when: not (cis_role_completed | default(false))
+
+    - name: Fail the build if still not completed after 3 attempts
+      ansible.builtin.fail:
+        msg: "CIS hardening failed to complete after 3 attempts — likely a persistent WinRM issue, not transient."
+      when: not (cis_role_completed | default(false))
+
+- name: "Post-hardening: WinRM re-enablement for Packer"
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: "CI FIX: Re-enable remote UAC tokens for Packer"
+      win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+        name: LocalAccountTokenFilterPolicy
+        data: 1
+        type: dword
+        state: present
 
   # =========================================================================
   # CRITICAL CI FIX: Prop the door open for Packer!
