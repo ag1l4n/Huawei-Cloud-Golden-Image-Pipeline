@@ -1,11 +1,9 @@
-- name: Apply CIS Level 1 Hardening to Windows Server 2022
+- name: "CIS Hardening - Attempt 1"
   hosts: all
   gather_facts: true
-  roles:
-    - role: windows_2022_cis
-      vars:
-        win_2022_cis_level_1: true
-        win_2022_cis_level_2: false
+  vars:
+    win_2022_cis_level_1: true
+    win_2022_cis_level_2: false
   tasks:
     - block:
         - name: Run CIS hardening role
@@ -28,6 +26,9 @@
     win_2022_cis_level_1: true
     win_2022_cis_level_2: false
   tasks:
+    - name: Reset unreachable/failed state from previous play so this play can reconnect
+      ansible.builtin.meta: clear_host_errors
+
     - name: Pause to let WinRM/service recover before reconnecting
       ansible.builtin.pause:
         seconds: 20
@@ -56,6 +57,9 @@
     win_2022_cis_level_1: true
     win_2022_cis_level_2: false
   tasks:
+    - name: Reset unreachable/failed state from previous play so this play can reconnect
+      ansible.builtin.meta: clear_host_errors
+
     - name: Pause before final retry
       ansible.builtin.pause:
         seconds: 20
@@ -72,24 +76,18 @@
         msg: "CIS hardening failed to complete after 3 attempts — likely a persistent WinRM issue, not transient."
       when: not (cis_role_completed | default(false))
 
+# =============================================================================
+# CRITICAL CI FIX: Prop the door open for Packer!
+# These tasks run immediately after the CIS role finishes to ensure
+# Packer doesn't get locked out during the windows-restart and sysprep steps.
+# =============================================================================
 - name: "Post-hardening: WinRM re-enablement for Packer"
   hosts: all
   gather_facts: false
   tasks:
-    - name: "CI FIX: Re-enable remote UAC tokens for Packer"
-      win_regedit:
-        path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
-        name: LocalAccountTokenFilterPolicy
-        data: 1
-        type: dword
-        state: present
+    - name: Reset unreachable/failed state before final post-hardening pass
+      ansible.builtin.meta: clear_host_errors
 
-  # =========================================================================
-  # CRITICAL CI FIX: Prop the door open for Packer!
-  # These tasks run immediately after the CIS role finishes to ensure 
-  # Packer doesn't get locked out during the windows-restart and sysprep steps.
-  # =========================================================================
-  post_tasks:
     - name: Reboot to apply CIS changes that require a restart
       ansible.windows.win_reboot:
         reboot_timeout: 900
@@ -134,4 +132,4 @@
         data: 0
         type: dword
         state: present
-      # NOTE: Restored to CIS-required value of 2 by apply-winrm-cis-controls.ps1
+      # NOTE: Restored to CIS-required value of 2 by finalize.ps1 / apply-winrm-cis-controls.ps1
