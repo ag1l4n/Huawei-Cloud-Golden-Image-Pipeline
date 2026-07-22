@@ -168,10 +168,6 @@ jobs:
           echo "Roles missing. Installing from requirements.yml..."
           ansible-galaxy install -r requirements.yml --roles-path roles/
 
-      - name: Debug - show CIS role defaults
-        run: |
-          find / -path "*windows_2022_cis*defaults/main.yml" -exec cat {} \; 2>/dev/null
-
       - name: Packer Init
         if: ${{ inputs.scan_only != true }}
         env:
