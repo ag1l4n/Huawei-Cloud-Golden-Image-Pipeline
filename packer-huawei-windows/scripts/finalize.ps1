@@ -1,5 +1,12 @@
 # =============================================================================
 # finalize.ps1 - Corrected Registry Access & Restoration
+# NOTE: WinRM GPO lockdown (formerly "Part 3" in this script) has been moved
+# OUT and into the final Packer provisioner instead. Writing AllowBasic /
+# AllowUnencryptedTraffic to the GPO WinRM registry paths appears to force
+# an immediate reload of the WinRM listener stack, which drops the live
+# session regardless of the transport/auth currently in use -- so it must
+# be the very last thing that happens, alongside listener/cert/firewall
+# cleanup and the Sysprep trigger, not a mid-pipeline step.
 # =============================================================================
 
 function Set-Reg {
@@ -123,12 +130,4 @@ $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 Register-ScheduledTask -TaskName 'RestoreCISPolicies' -Action $action -Trigger $trigger -Principal $principal -Force
 
-# Finalize WinRM
-Write-Output "=== Part 3: WinRM Lockdown ==="
-$winrmPaths = @("HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Client", "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WinRM\Service")
-foreach ($path in $winrmPaths) {
-    Set-Reg $path "AllowBasic" 0
-    Set-Reg $path "AllowUnencryptedTraffic" 0
-}
-
-Write-Output "finalize.ps1 complete. WinRM registry policy applied; Sysprep will be triggered by the dedicated Cloudbase-Init provisioner step."
+Write-Output "finalize.ps1 complete. WinRM GPO lockdown and Sysprep are handled by the final provisioner step."
