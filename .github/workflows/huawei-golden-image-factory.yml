@@ -404,9 +404,6 @@ jobs:
             exit 1
           fi
 
-          HELP=$(cae VPC --help | grep -i public)
-          echo "$HELP"
-          exit 1
           echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
           # cae VPC UpdatePublicip \
           #   --cli-region="${{ env.HW_LOCATION }}" \
