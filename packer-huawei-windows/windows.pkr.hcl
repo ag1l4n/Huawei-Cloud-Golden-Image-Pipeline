@@ -25,6 +25,7 @@ source "huaweicloud-ecs" "windows_cis" {
 
   image_name        = "win2022-cis-v${var.image_version}"
   source_image_name = "Windows Server 2022 Standard 64bit English" # Verify exact Huawei image name
+  availability_zone = "AZ2"
   flavor            = "c7n.large.4"
 
   vpc_id          = var.hw_vpc_id
