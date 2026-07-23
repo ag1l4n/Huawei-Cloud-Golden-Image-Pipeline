@@ -405,11 +405,20 @@ jobs:
           fi
 
           echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
-          cae VPC AssociatePublicips \
+          cae VPC UpdatePublicip \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
-            --publicip.id="${{ secrets.HW_EXISTING_EIP_ID }}" \
+            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
             --publicip.port_id="$ECS_PORT_ID"
+
+          if ! cae VPC UpdatePublicip \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
+            --publicip.port_id="$ECS_PORT_ID"; then
+            echo "ERROR: Failed to bind EIP to port $ECS_PORT_ID"
+            exit 1
+          fi
 
           echo "EIP Successfully bound. Resolving IP address..."
           EIP_DETAILS=$(cae VPC ShowPublicip \
@@ -418,6 +427,9 @@ jobs:
             --cli-output=json \
             --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
             2>/dev/null)
+
+          echo "--- Raw ShowPublicip response ---"
+          echo "$EIP_DETAILS"
 
           # -----------------------------------------------------------------
           # Fetch the Public (Floating) IP assigned to the instance
