@@ -396,7 +396,7 @@ jobs:
             --server_id="$HW_SERVER_ID" \
             > /tmp/show_server_output.json 2>/dev/null
 
-          ECS_PORT_ID=$(jq -r '.server.addresses | map(.[0].port) | .[0] // empty' /tmp/show_server_output.json)
+          ECS_PORT_ID=$(jq -r '.server.network_interfaces[0].port_id // empty' /tmp/show_server_output.json)
 
           if [[ -z "$ECS_PORT_ID" ]]; then
             echo "ERROR: Could not find Port ID for server $HW_SERVER_ID"
