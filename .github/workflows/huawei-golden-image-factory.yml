@@ -411,14 +411,17 @@ jobs:
             --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
             --publicip.port_id="$ECS_PORT_ID"
 
-          if ! cae VPC UpdatePublicip \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
-            --publicip.port_id="$ECS_PORT_ID"; then
-            echo "ERROR: Failed to bind EIP to port $ECS_PORT_ID"
-            exit 1
-          fi
+          # if ! cae VPC UpdatePublicip \
+          #   --cli-region="${{ env.HW_LOCATION }}" \
+          #   --cli-warning=false \
+          #   --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
+          #   --publicip.port_id="$ECS_PORT_ID"; then
+          #   echo "ERROR: Failed to bind EIP to port $ECS_PORT_ID"
+          #   exit 1
+          # fi
+
+          cae VPC --help | grep -i public
+          exit 1
 
           echo "EIP Successfully bound. Resolving IP address..."
           EIP_DETAILS=$(cae VPC ShowPublicip \
