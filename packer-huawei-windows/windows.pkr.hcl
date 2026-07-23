@@ -116,6 +116,9 @@ build {
 
   provisioner "powershell" {
     inline = [
+      "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\MSV1_0' -Name 'RestrictReceivingNTLMTraffic' -Value 2 -Type DWord -Force",
+      "$winrmPaths = @('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WinRM\\Client', 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WinRM\\Service')",
+      "foreach ($path in $winrmPaths) { if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }; Set-ItemProperty -Path $path -Name 'AllowBasic' -Value 0 -Type DWord -Force; Set-ItemProperty -Path $path -Name 'AllowUnencryptedTraffic' -Value 0 -Type DWord -Force }",
       "Remove-Item -Path WSMan:\\Localhost\\Listener\\* -Recurse -Force -ErrorAction SilentlyContinue",
       "Remove-NetFirewallRule -DisplayName 'WinRM-HTTPS' -ErrorAction SilentlyContinue",
       "Get-ChildItem Cert:\\LocalMachine\\My | Where-Object {$_.Subject -eq 'CN=packer-build'} | Remove-Item -Force",

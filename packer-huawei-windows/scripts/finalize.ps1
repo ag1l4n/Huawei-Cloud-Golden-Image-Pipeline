@@ -29,7 +29,12 @@ function Grant-KeyAccess {
 
 Write-Output "=== Part 1: Initial Hardening ==="
 Unregister-ScheduledTask -TaskName 'RestoreCISPolicies' -Confirm:$false -ErrorAction SilentlyContinue
-Set-Reg "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0" "RestrictReceivingNTLMTraffic" 2
+# NOTE: "RestrictReceivingNTLMTraffic" = 2 ("Deny all") is deliberately NOT set here.
+# NTLM's SSP evaluates this registry value in real time on every new auth attempt --
+# setting it here denies any *new* WinRM shell Packer tries to open for the rest of
+# the build (including this very script's own post-run cleanup upload), even though
+# the currently-open shell keeps working. It must be set only in the final
+# provisioner, after nothing else needs a live connection.
 
 $scriptsPath = "C:\Windows\Setup\Scripts"
 if (!(Test-Path $scriptsPath)) { 
