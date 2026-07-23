@@ -404,7 +404,8 @@ jobs:
             exit 1
           fi
 
-          cae VPC --help | grep -i public
+          HELP=$(cae VPC --help | grep -i public)
+          echo $HELP
           exit
           echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
           # cae VPC UpdatePublicip \
