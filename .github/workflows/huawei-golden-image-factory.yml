@@ -405,7 +405,12 @@ jobs:
           fi
 
           echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
-          if ! cae VPC UpdatePublicip \
+
+          echo "--- Available cae EIP operations ---"
+          cae --help
+          cae EIP --help || echo "(cae EIP group not recognized either)"
+
+          if ! cae EIP UpdatePublicip \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
             --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
@@ -415,6 +420,7 @@ jobs:
           fi
 
           echo "EIP Successfully bound. Resolving IP address..."
+
           EIP_DETAILS=$(cae VPC ShowPublicip \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
