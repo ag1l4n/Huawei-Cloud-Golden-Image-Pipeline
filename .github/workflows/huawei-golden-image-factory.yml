@@ -406,8 +406,8 @@ jobs:
 
           echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
 
-          echo "--- Full cae VPC operations list ---"
-          cae VPC --help || true
+          echo "--- Full cae ECS operations list ---"
+          cae ECS --help || true
 
           if ! cae VPC UpdatePublicip \
             --cli-region="${{ env.HW_LOCATION }}" \
