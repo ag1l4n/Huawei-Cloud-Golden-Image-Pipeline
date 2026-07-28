@@ -371,7 +371,6 @@ jobs:
             if [[ "$STATUS" == "SUCCESS" ]]; then 
               echo "VM is ACTIVE. Waiting 30s for cloud-init and NIC propagation..."
               sleep 30
-              break
             fi
             
             if [[ "$STATUS" == "FAIL" ]]; then
