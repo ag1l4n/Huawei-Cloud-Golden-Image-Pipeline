@@ -323,6 +323,8 @@ jobs:
             ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
           fi
 
+          cae ECS CreateServers --help | grep -i public
+
           cae ECS CreateServers \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
@@ -334,6 +336,7 @@ jobs:
             --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
             --server.root_volume.volumetype="SAS" \
             --server.user_data="$ENCODED_USER_DATA" \
+            --server.publicip.id="${{ secrets.HW_EXISTING_EIP_ID }}" \
             > create_server_output.json 2>&1
 
           echo "--- Raw CreateServers response ---"
@@ -387,7 +390,6 @@ jobs:
             fi
           done
 
-          echo "Fetching server details to retrieve Port ID..."
           cae ECS ShowServer \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
@@ -396,46 +398,16 @@ jobs:
             --server_id="$HW_SERVER_ID" \
             > /tmp/show_server_output.json 2>/dev/null
 
-          ECS_PORT_ID=$(jq -r '.server.network_interfaces[0].port_id // empty' /tmp/show_server_output.json)
+          jq -r '.server.addresses' /tmp/show_server_output.json
 
-          if [[ -z "$ECS_PORT_ID" ]]; then
-            echo "ERROR: Could not find Port ID for server $HW_SERVER_ID"
-            cat /tmp/show_server_output.json
-            exit 1
-          fi
+          echo "--- Raw ShowServer response ---"
+          cat /tmp/show_server_output.json
 
-          echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
-
-          echo "--- Full cae ECS operations list ---"
-          cae ECS --help || true
-
-          if ! cae VPC UpdatePublicip \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
-            --publicip.port_id="$ECS_PORT_ID"; then
-            echo "ERROR: Failed to bind EIP to port $ECS_PORT_ID"
-            exit 1
-          fi
-          echo "EIP Successfully bound. Resolving IP address..."
-
-          EIP_DETAILS=$(cae VPC ShowPublicip \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --cli-output=json \
-            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
-            2>/dev/null)
-
-          echo "--- Raw ShowPublicip response ---"
-          echo "$EIP_DETAILS"
-
-          # -----------------------------------------------------------------
-          # Fetch the Public (Floating) IP assigned to the instance
-          # -----------------------------------------------------------------
-          VM_IP=$(echo "$EIP_DETAILS" | jq -r '.publicip.public_ip_address // empty')
+          VM_IP=$(jq -r '.server.addresses[][] | select(.["OS-EXT-IPS:type"] == "floating") | .addr // empty' /tmp/show_server_output.json)
 
           if [[ -z "$VM_IP" ]]; then
-            echo "ERROR: Failed to retrieve public IP address from EIP details."
+            echo "ERROR: Failed to retrieve public IP address from server details."
+            cat /tmp/show_server_output.json
             exit 1
           fi
 
