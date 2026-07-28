@@ -371,6 +371,7 @@ jobs:
             if [[ "$STATUS" == "SUCCESS" ]]; then 
               echo "VM is ACTIVE. Waiting 30s for cloud-init and NIC propagation..."
               sleep 30
+              break
             fi
             
             if [[ "$STATUS" == "FAIL" ]]; then
@@ -395,8 +396,6 @@ jobs:
             --server_id="$HW_SERVER_ID" \
             > /tmp/show_server_output.json 2>/dev/null
 
-          cae VPC --help | grep -i public
-
           ECS_PORT_ID=$(jq -r '.server.network_interfaces[0].port_id // empty' /tmp/show_server_output.json)
 
           if [[ -z "$ECS_PORT_ID" ]]; then
@@ -406,12 +405,6 @@ jobs:
           fi
 
           echo "Binding existing EIP to Port ID: $ECS_PORT_ID"
-          cae VPC UpdatePublicip \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --publicip_id="${{ secrets.HW_EXISTING_EIP_ID }}" \
-            --publicip.port_id="$ECS_PORT_ID"
-
           if ! cae VPC UpdatePublicip \
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
