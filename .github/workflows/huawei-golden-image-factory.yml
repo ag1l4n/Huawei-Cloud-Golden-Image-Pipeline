@@ -421,10 +421,10 @@ jobs:
       - name: Wait for SSH Connection
         run: |
           for i in {1..20}; do
-            if ssh -o StrictHostKeyChecking=no \
+            if ssh -v -o StrictHostKeyChecking=no \
                   -o ConnectTimeout=5 \
                   -i ~/.ssh/scanner_key \
-                  sysadmin@"$VM_IP" exit 0 2>/dev/null; then
+                  sysadmin@"$VM_IP" exit 0; then
               echo "SSH is up after attempt $i."
               break
             fi
