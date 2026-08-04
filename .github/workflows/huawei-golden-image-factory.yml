@@ -270,10 +270,23 @@ jobs:
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
             cat << 'EOF' > /tmp/hw_scan_userdata.ps1
           #ps1_sysnative
+          $sshdConfig = "$env:ProgramData\ssh\sshd_config"
+          
+          # Wait up to 60 seconds for the file to be available
+          $wait = 0
+          while (-not (Test-Path $sshdConfig) -and $wait -lt 60) {
+              Start-Sleep -Seconds 5
+              $wait += 5
+          }
+
+          # 1. Inject the public key
           $adminKeysPath = "$env:ProgramData\ssh\administrators_authorized_keys"
           Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          
+          # 2. Fix permissions (Crucial for OpenSSH on Windows)
           icacls.exe $adminKeysPath /inheritance:r /grant "*S-1-5-18:(F)" /grant "*S-1-5-32-544:(F)" | Out-Null
-          $sshdConfig = "$env:ProgramData\ssh\sshd_config"
+
+          # 3. Disable StrictModes and restart
           (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
           Restart-Service sshd -Force
           EOF
@@ -424,7 +437,7 @@ jobs:
             if ssh -o StrictHostKeyChecking=no \
                   -o ConnectTimeout=5 \
                   -i ~/.ssh/scanner_key \
-                  Administrator@"$VM_IP" exit 0 2>/dev/null; then
+                  sysadmin@"$VM_IP" exit 0 2>/dev/null; then
               echo "SSH is up after attempt $i."
               break
             fi

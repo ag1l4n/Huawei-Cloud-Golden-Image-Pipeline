@@ -64,7 +64,10 @@ build {
     elevated_password = build.WinRMPassword
     inline = [
       "Write-Output 'Installing OpenSSH Server...'",
-      "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0"
+      "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0",
+      "Write-Output 'Initializing sshd to generate sshd_config...'",
+      "Start-Service sshd",
+      "Stop-Service sshd"
     ]
   }
 
