@@ -295,10 +295,10 @@ jobs:
           echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
           SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            cat << 'EOF' > /tmp/hw_scan_userdata.ps1
+          cat << 'EOF' > /tmp/hw_scan_userdata.ps1
           #ps1_sysnative
           $sshdConfig = "$env:ProgramData\ssh\sshd_config"
-          
+
           # Wait up to 60 seconds for the file to be available
           $wait = 0
           while (-not (Test-Path $sshdConfig) -and $wait -lt 60) {
@@ -309,7 +309,7 @@ jobs:
           # 1. Inject the public key
           $adminKeysPath = "$env:ProgramData\ssh\administrators_authorized_keys"
           Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
-          
+
           # 2. Fix permissions (Crucial for OpenSSH on Windows)
           icacls.exe $adminKeysPath /inheritance:r /grant "*S-1-5-18:(F)" /grant "*S-1-5-32-544:(F)" | Out-Null
 
@@ -317,10 +317,9 @@ jobs:
           (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
           Restart-Service sshd -Force
           EOF
-            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
+          sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
           else
-            # Inject proxy settings so OpenSCAP downloads succeed on the isolated Linux scanner VM
-            cat << 'EOF' > /tmp/hw_scan_userdata.sh
+          cat << 'EOF' > /tmp/hw_scan_userdata.sh
           #!/bin/bash
           mkdir -p /home/sysadmin/.ssh
           echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
@@ -328,8 +327,8 @@ jobs:
           chmod 700 /home/sysadmin/.ssh
           chmod 600 /home/sysadmin/.ssh/authorized_keys
           EOF
-            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
-            cat /tmp/hw_scan_userdata.sh
+          sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
+          cat /tmp/hw_scan_userdata.sh
           fi
 
       - name: Deploy Ephemeral VM
