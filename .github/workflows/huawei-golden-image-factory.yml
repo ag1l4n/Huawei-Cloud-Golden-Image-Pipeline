@@ -185,46 +185,73 @@ jobs:
             # We pipe through sed to strip leading YAML spaces. 
             # #ps1_sysnative MUST be at the exact beginning of the file!
             cat << 'EOF' | sed 's/^[ \t]*//' > /tmp/hw_userdata.ps1
-          #ps1_sysnative
-          $ErrorActionPreference = "Stop"
+            #ps1_sysnative
+            $ErrorActionPreference = "Stop"
 
-          # Remove the default HTTP listener so nothing falls back to Basic/unencrypted
-          Get-ChildItem WSMan:\Localhost\Listener |
-              Where-Object { $_.Keys -contains "Transport=HTTP" } |
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            # ==========================================
+            # 1. WINRM BOOTSTRAP (Required for Packer)
+            # ==========================================
+            Get-ChildItem WSMan:\Localhost\Listener |
+                Where-Object { $_.Keys -contains "Transport=HTTP" } |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-          # Self-signed cert for the HTTPS listener (fine for build-time use;
-          # winrm_insecure = true on the Packer side skips validation)
-          $Cert = New-SelfSignedCertificate -CertstoreLocation Cert:\LocalMachine\My -DnsName "packer-build"
+            $Cert = New-SelfSignedCertificate -CertstoreLocation Cert:\LocalMachine\My -DnsName "packer-build"
 
-          New-Item -Path WSMan:\LocalHost\Listener -Transport HTTPS -Address * `
-              -CertificateThumbPrint $Cert.Thumbprint -Force
+            New-Item -Path WSMan:\LocalHost\Listener -Transport HTTPS -Address * `
+                -CertificateThumbPrint $Cert.Thumbprint -Force
 
-          # Lock down auth to NTLM only — no Basic, no unencrypted traffic
-          winrm set winrm/config/service '@{AllowUnencrypted="false"}'
-          winrm set winrm/config/service/auth '@{Basic="false"}'
-          winrm set winrm/config/service/auth '@{Negotiate="true"}'
-          winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
+            winrm set winrm/config/service '@{AllowUnencrypted="false"}'
+            winrm set winrm/config/service/auth '@{Basic="false"}'
+            winrm set winrm/config/service/auth '@{Negotiate="true"}'
+            winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
 
-          New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
-              -Name 'LmCompatibilityLevel' -Value 2 -Type DWord -Force
+            New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+            
+            Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
+                -Name 'LmCompatibilityLevel' -Value 2 -Type DWord -Force
 
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
-              -Name 'NTLMMinServerSec' -Value 536870912 -Type DWord -Force
+            Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
+                -Name 'NTLMMinServerSec' -Value 536870912 -Type DWord -Force
 
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' `
-              -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
+            Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' `
+                -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
 
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' `
-              -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
+            Set-ItemProperty -Path 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' `
+                -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
 
-          Set-Service -Name WinRM -StartupType Automatic
-          Start-Service WinRM
-          EOF
+            Set-Service -Name WinRM -StartupType Automatic
+            Start-Service WinRM
+
+            # ==========================================
+            # 2. OPENSSH BOOTSTRAP (Required for Scanner)
+            # ==========================================
+            $sshDir = "$env:ProgramData\ssh"
+            if (!(Test-Path $sshDir)) {
+                New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+            }
+
+            $adminKeysPath = "$sshDir\administrators_authorized_keys"
+            Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+            
+            icacls.exe $adminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "BUILTIN\Administrators:(F)" | Out-Null
+
+            $sshdConfig = "$sshDir\sshd_config"
+            if (Test-Path $sshdConfig) {
+                (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
+            }
+
+            if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+                New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+            }
+
+            Set-Service -Name sshd -StartupType Automatic
+            Restart-Service sshd -Force
+            EOF
+            
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_userdata.ps1
             echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
           else
-            #!/bin/bash
+            # Linux scanner userdata block...
             printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
             chmod +x /tmp/hw_userdata.sh
             echo "Verifying user_data contents:"
