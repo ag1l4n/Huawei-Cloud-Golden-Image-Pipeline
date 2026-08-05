@@ -294,80 +294,86 @@ jobs:
         run: |
           echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
           SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
+
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            cat << 'EOF' > /tmp/hw_userdata.ps1
+            # We use 'EOF' without indentation to ensure GitHub Actions YAML doesn't break
+            cat << 'EOF' > /tmp/hw_scan_userdata.ps1
           #ps1_sysnative
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Continue"
 
-          # ==========================================
-          # 1. WINRM BOOTSTRAP (Required for Packer)
-          # ==========================================
-          Get-ChildItem WSMan:\Localhost\Listener |
-              Where-Object { $_.Keys -contains "Transport=HTTP" } |
-              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Output "--- Starting Ephemeral Scanner Initialization ---"
 
-          $Cert = New-SelfSignedCertificate -CertstoreLocation Cert:\LocalMachine\My -DnsName "packer-build"
-
-          New-Item -Path WSMan:\LocalHost\Listener -Transport HTTPS -Address * `
-              -CertificateThumbPrint $Cert.Thumbprint -Force
-
-          winrm set winrm/config/service '@{AllowUnencrypted="false"}'
-          winrm set winrm/config/service/auth '@{Basic="false"}'
-          winrm set winrm/config/service/auth '@{Negotiate="true"}'
-          winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
-
-          New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
-
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
-              -Name 'LmCompatibilityLevel' -Value 2 -Type DWord -Force
-
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' `
-              -Name 'NTLMMinServerSec' -Value 536870912 -Type DWord -Force
-
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' `
-              -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
-
-          Set-ItemProperty -Path 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' `
-              -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force
-
-          Set-Service -Name WinRM -StartupType Automatic
-          Start-Service WinRM
-
-          # ==========================================
-          # 2. OPENSSH BOOTSTRAP (Required for Scanner)
-          # ==========================================
-          $sshDir = "$env:ProgramData\ssh"
-          if (!(Test-Path $sshDir)) {
-              New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+          # 1. WAIT FOR CIS HARDENING TO FINISH
+          # Prevent Cloudbase-Init from injecting SSH keys before the CIS task resets them
+          $logPath = "C:\Windows\Setup\Scripts\RestoreCIS.log"
+          $waited = 0
+          while ($waited -lt 600) {
+              if (Test-Path $logPath) {
+                  $logContent = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
+                  if ($logContent -match "sshd restarted") {
+                      Write-Output "CIS Hardening completed."
+                      break
+                  }
+              }
+              Write-Output "Waiting for CIS hardening... ($waited s)"
+              Start-Sleep -Seconds 10
+              $waited += 10
           }
 
-          $adminKeysPath = "$sshDir\administrators_authorized_keys"
-          Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          # 2. FIX UAC REMOTE RESTRICTIONS
+          # Required for users in the Administrators group to authenticate over network/SSH
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "LocalAccountTokenFilterPolicy" -Value 1 -Force
 
+          # 3. INJECT SSH KEY FOR 'sysadmin' USER (Bulletproof method)
+          $sysadminSid = (Get-LocalUser -Name 'sysadmin').SID.Value
+          $userSsh = "C:\Users\sysadmin\.ssh"
+          if (-not (Test-Path $userSsh)) { New-Item -ItemType Directory -Force -Path $userSsh | Out-Null }
+          Set-Content -Path "$userSsh\authorized_keys" -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          icacls.exe "$userSsh\authorized_keys" /inheritance:r /grant "*$($sysadminSid):(F)" /grant "NT AUTHORITY\SYSTEM:(F)" | Out-Null
+
+          # 4. INJECT FALLBACK SSH KEY FOR ADMINISTRATORS GROUP
+          $sshProgramData = "$env:ProgramData\ssh"
+          if (-not (Test-Path $sshProgramData)) { New-Item -ItemType Directory -Force -Path $sshProgramData | Out-Null }
+          $adminKeysPath = "$sshProgramData\administrators_authorized_keys"
+          Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
           icacls.exe $adminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "BUILTIN\Administrators:(F)" | Out-Null
 
-          $sshdConfig = "$sshDir\sshd_config"
+          # 5. FIX STRICTMODES IN SSHD_CONFIG
+          $sshdConfig = "$sshProgramData\sshd_config"
           if (Test-Path $sshdConfig) {
               (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
           }
 
+          # 6. ENSURE FIREWALL ALLOWS SSH
           if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
               New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
           }
 
-          Set-Service -Name sshd -StartupType Automatic
+          # 7. RESTART SSHD
           Restart-Service sshd -Force
+          Write-Output "--- SSH configuration finalized and service restarted ---"
           EOF
 
-            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_userdata.ps1
-            echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
+            # Inject the actual public key into the placeholder
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
+
           else
-            # Linux scanner userdata block...
-            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
-            chmod +x /tmp/hw_userdata.sh
-            echo "Verifying user_data contents:"
-            cat /tmp/hw_userdata.sh
-            echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
+            # Linux scanner userdata block
+            cat << 'EOF' > /tmp/hw_scan_userdata.sh
+          #!/bin/bash
+          mkdir -p /home/sysadmin/.ssh
+          echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
+          chown -R sysadmin:sysadmin /home/sysadmin/.ssh
+          chmod 700 /home/sysadmin/.ssh
+          chmod 600 /home/sysadmin/.ssh/authorized_keys
+          sed -i "s/^#\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config
+          systemctl restart sshd
+          EOF
+            
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
+            chmod +x /tmp/hw_scan_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
           fi
 
       - name: Deploy Ephemeral VM
