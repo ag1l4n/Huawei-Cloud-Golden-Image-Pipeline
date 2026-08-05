@@ -396,9 +396,9 @@ jobs:
           EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
 
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.ps1)
+            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_userdata.ps1)
           else
-            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
+            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_userdata.sh)
           fi
 
           cae ECS CreateServers --help | grep -i public
