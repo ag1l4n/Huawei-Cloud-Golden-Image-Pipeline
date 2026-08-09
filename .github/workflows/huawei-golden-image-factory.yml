@@ -352,6 +352,25 @@ jobs:
           # 7. RESTART SSHD
           Restart-Service sshd -Force
           Write-Output "--- SSH configuration finalized and service restarted ---"
+          # 8. DIAGNOSTIC TRACE (If things fail, dump logs to console)
+          Write-Output "--- Dumping Cloudbase-Init Log for Debugging ---"
+          $CBInitLog = "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\log\cloudbase-init.log"
+          if (Test-Path $CBInitLog) {
+              Get-Content $CBInitLog -Tail 100
+          } else {
+              Write-Output "Cloudbase-init log not found at expected path."
+          }
+          
+          Write-Output "--- Checking OpenSSH Service Status ---"
+          Get-Service sshd | Select-Object Status, StartType
+          
+          Write-Output "--- Checking Authorized Keys File ---"
+          if (Test-Path "C:\Users\sysadmin\.ssh\authorized_keys") {
+              Write-Output "authorized_keys exists and contains:"
+              Get-Content "C:\Users\sysadmin\.ssh\authorized_keys"
+          } else {
+              Write-Output "ERROR: authorized_keys file does NOT exist!"
+          }
           EOF
 
             # Inject the actual public key into the placeholder
@@ -519,6 +538,20 @@ jobs:
               exit 1
             fi
           done
+      
+      - name: Fetch Huawei ECS Serial Console Logs
+        if: always()
+        run: |
+          echo "Fetching serial console output to inspect script failure..."
+          cae ECS GetConsoleOutput \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --cli-output=json \
+            --server_id="${{ env.HW_SERVER_ID }}" \
+            > /tmp/console_output.json || true
+
+          echo "--- Serial Console Log ---"
+          jq -r '.output // .message //.' /tmp/console_output.json || cat /tmp/console_output.json
 
       # ──────────────────────────────────────────────────────────────────────
       # SCAN PHASE
