@@ -182,46 +182,36 @@ jobs:
         if: ${{ inputs.scan_only != true }}
         run: |
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            # We pipe through sed to strip leading YAML spaces. 
-            # #ps1_sysnative MUST be at the exact beginning of the file!
-          cat << 'EOF' > /tmp/hw_scan_userdata.ps1
+            cat << 'EOF' > /tmp/hw_build_userdata.ps1
           #ps1_sysnative
-          $ErrorActionPreference = "Continue"
-
-          Write-Output "--- Starting Ephemeral Scanner Initialization ---"
-
-          # 1. INJECT SSH KEY FOR 'sysadmin' USER
-          $sysadminSid = (Get-LocalUser -Name 'sysadmin').SID.Value
-          $userSsh = "C:\Users\sysadmin\.ssh"
-          if (-not (Test-Path $userSsh)) { New-Item -ItemType Directory -Force -Path $userSsh | Out-Null }
-          Set-Content -Path "$userSsh\authorized_keys" -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
-          icacls.exe "$userSsh\authorized_keys" /inheritance:r /grant "*$($sysadminSid):(F)" /grant "NT AUTHORITY\SYSTEM:(F)" | Out-Null
-
-          # 2. FIX STRICTMODES IN SSHD_CONFIG
-          $sshdConfig = "$env:ProgramData\ssh\sshd_config"
-          if (Test-Path $sshdConfig) {
-              (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
-          }
-
-          # 3. ENSURE FIREWALL ALLOWS SSH
-          if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
-              New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
-          }
-
-          # 4. RESTART SSHD
-          Restart-Service sshd -Force
-          Write-Output "--- SSH configuration finalized and service restarted ---"
+          $ErrorActionPreference = "Stop"
+          Write-Output "Bootstrapping WinRM over HTTPS for Packer..."
+          
+          # Remove the default HTTP listener
+          Get-ChildItem WSMan:\Localhost\Listener | Where-Object { $_.Keys -contains "Transport=HTTP" } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # Create Self-Signed Cert and HTTPS Listener
+          $Cert = New-SelfSignedCertificate -CertstoreLocation Cert:\LocalMachine\My -DnsName "packer-build"
+          New-Item -Path WSMan:\LocalHost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $Cert.Thumbprint -Force
+          
+          # Lock down auth to NTLM only
+          winrm set winrm/config/service '@{AllowUnencrypted="false"}'
+          winrm set winrm/config/service/auth '@{Basic="false"}'
+          winrm set winrm/config/service/auth '@{Negotiate="true"}'
+          winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
+          
+          # Open Firewall and Start Service
+          New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow
+          Set-Service -Name WinRM -StartupType Automatic
+          Start-Service WinRM
           EOF
             
-            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
-            echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
+            echo "USERDATA_FILE=/tmp/hw_build_userdata.ps1" >> $GITHUB_ENV
           else
-            # Linux scanner userdata block...
-            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_scan_userdata.sh
-            chmod +x /tmp/hw_scan_userdata.sh
-            echo "Verifying user_data contents:"
-            cat /tmp/hw_scan_userdata.sh
-            echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
+            # Linux root login fix
+            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_build_userdata.sh
+            chmod +x /tmp/hw_build_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_build_userdata.sh" >> $GITHUB_ENV
           fi
 
       - name: Build Golden Image
