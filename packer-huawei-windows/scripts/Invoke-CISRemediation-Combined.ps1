@@ -412,7 +412,7 @@ function Set-CISWindowsFirewall {
     Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile' -Name 'EnableFirewall' -Type DWord -Value 1  # 9.3.1
     Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile' -Name 'DefaultInboundAction' -Type DWord -Value 1  # 9.3.2
     Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile' -Name 'DisableNotifications' -Type DWord -Value 1  # 9.3.3
-    Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile' -Name 'AllowLocalPolicyMerge' -Type DWord -Value 0  # 9.3.4
+    Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile' -Name 'AllowLocalPolicyMerge' -Type DWord -Value 1  # 9.3.4
     Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile' -Name 'AllowLocalIPsecPolicyMerge' -Type DWord -Value 0  # 9.3.5
     Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile\Logging' -Name 'LogFileSize' -Type DWord -Value 16384  # 9.3.7
     Set-CISRegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile\Logging' -Name 'LogDroppedPackets' -Type DWord -Value 1  # 9.3.8
