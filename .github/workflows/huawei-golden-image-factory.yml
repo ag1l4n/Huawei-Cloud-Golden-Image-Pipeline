@@ -213,15 +213,15 @@ jobs:
           Write-Output "--- SSH configuration finalized and service restarted ---"
           EOF
             
-            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_userdata.ps1
-            echo "USERDATA_FILE=/tmp/hw_userdata.ps1" >> $GITHUB_ENV
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
           else
             # Linux scanner userdata block...
-            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
-            chmod +x /tmp/hw_userdata.sh
+            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_scan_userdata.sh
+            chmod +x /tmp/hw_scan_userdata.sh
             echo "Verifying user_data contents:"
-            cat /tmp/hw_userdata.sh
-            echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
+            cat /tmp/hw_scan_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
           fi
 
       - name: Build Golden Image
