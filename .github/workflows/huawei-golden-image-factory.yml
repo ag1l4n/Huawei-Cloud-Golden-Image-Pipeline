@@ -185,23 +185,26 @@ jobs:
             cat << 'EOF' > /tmp/hw_build_userdata.ps1
           #ps1_sysnative
           $ErrorActionPreference = "Stop"
-          Write-Output "Bootstrapping WinRM over HTTPS for Packer..."
-          
-          # Remove the default HTTP listener
-          Get-ChildItem WSMan:\Localhost\Listener | Where-Object { $_.Keys -contains "Transport=HTTP" } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-          
-          # Create Self-Signed Cert and HTTPS Listener
-          $Cert = New-SelfSignedCertificate -CertstoreLocation Cert:\LocalMachine\My -DnsName "packer-build"
-          New-Item -Path WSMan:\LocalHost\Listener -Transport HTTPS -Address * -CertificateThumbPrint $Cert.Thumbprint -Force
-          
-          # Lock down auth to NTLM only
-          winrm set winrm/config/service '@{AllowUnencrypted="false"}'
-          winrm set winrm/config/service/auth '@{Basic="false"}'
-          winrm set winrm/config/service/auth '@{Negotiate="true"}'
-          winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
-          
-          # Open Firewall and Start Service
-          New-NetFirewallRule -DisplayName "WinRM-HTTPS" -Direction Inbound -LocalPort 5986 -Protocol TCP -Action Allow
+          Write-Output "--- Starting WinRM Bootstrap ---"
+
+          # Configure WinRM for Packer HTTPS (Port 5986)
+          winrm quickconfig -q
+          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+          winrm set winrm/config/service/auth '@{Basic="true"}'
+
+          # Create self-signed certificate for WinRM HTTPS if it doesn't exist
+          $Cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -like "*CN=*" } | Select-Object -First 1
+          if (-not $Cert) {
+              $Cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
+          }
+
+          # Create HTTPS listener
+          New-Item -Path WSMan:\LocalShell\Listener -Address * -Transport HTTPS -CertificateThumbprint $Cert.Thumbprint -Force
+
+          # Open Firewall for WinRM HTTPS
+          New-NetFirewallRule -Name "WinRM HTTPS" -DisplayName "WinRM HTTPS" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 5986
+
+          Write-Output "--- WinRM Ready ---"
           Set-Service -Name WinRM -StartupType Automatic
           Start-Service WinRM
           EOF

@@ -37,7 +37,6 @@ source "huaweicloud-ecs" "windows_cis" {
   # Huawei Windows communicator configuration
   communicator   = "winrm"
   winrm_username = "Administrator"
-  # winrm_password = var.windows_admin_pass
   winrm_use_ssl  = true
   winrm_insecure = true
   winrm_use_ntlm = true
@@ -45,7 +44,7 @@ source "huaweicloud-ecs" "windows_cis" {
   winrm_timeout  = "30m"
 
   # Huawei requires the password to be set for the Administrator account
-  user_data_file = var.user_data_file
+  user_data_file = "./scripts/bootstrap-winrm.ps1"
 }
 
 build {
