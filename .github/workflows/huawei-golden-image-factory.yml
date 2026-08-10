@@ -182,39 +182,36 @@ jobs:
         if: ${{ inputs.scan_only != true }}
         run: |
           if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
-            cat << 'EOF' > /tmp/hw_build_userdata.ps1
+            cat << 'EOF' > /tmp/hw_scan_userdata.ps1
           #ps1_sysnative
           $ErrorActionPreference = "Stop"
-          Write-Output "--- Starting WinRM Bootstrap ---"
+          Write-Output "--- Configuring WinRM for Packer ---"
 
-          # Configure WinRM for Packer HTTPS (Port 5986)
+          # Enable WinRM basic auth and unencrypted options if needed
           winrm quickconfig -q
           winrm set winrm/config/service '@{AllowUnencrypted="true"}'
           winrm set winrm/config/service/auth '@{Basic="true"}'
 
-          # Create self-signed certificate for WinRM HTTPS if it doesn't exist
-          $Cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -like "*CN=*" } | Select-Object -First 1
-          if (-not $Cert) {
-              $Cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
-          }
+          # Generate Self-Signed Certificate for WinRM HTTPS
+          $Cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
 
-          # Create HTTPS listener
+          # Create HTTPS WinRM Listener on port 5986
           New-Item -Path WSMan:\LocalShell\Listener -Address * -Transport HTTPS -CertificateThumbprint $Cert.Thumbprint -Force
 
-          # Open Firewall for WinRM HTTPS
-          New-NetFirewallRule -Name "WinRM HTTPS" -DisplayName "WinRM HTTPS" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 5986
+          # Ensure Windows Firewall allows WinRM HTTPS
+          New-NetFirewallRule -Name "WinRM-HTTPS-In-TCP" -DisplayName "WinRM HTTPS" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
 
-          Write-Output "--- WinRM Ready ---"
+          Write-Output "--- WinRM Listener Initialized Successfully ---"
           Set-Service -Name WinRM -StartupType Automatic
           Start-Service WinRM
           EOF
             
-            echo "USERDATA_FILE=/tmp/hw_build_userdata.ps1" >> $GITHUB_ENV
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
           else
             # Linux root login fix
-            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_build_userdata.sh
-            chmod +x /tmp/hw_build_userdata.sh
-            echo "USERDATA_FILE=/tmp/hw_build_userdata.sh" >> $GITHUB_ENV
+            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_scan_userdata.sh
+            chmod +x /tmp/hw_scan_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
           fi
 
       - name: Build Golden Image
