@@ -71,24 +71,11 @@ build {
     ]
   }
 
-  # 3. Main CIS Hardening via Ansible
-  provisioner "ansible" {
-    playbook_file   = "${path.root}/../ansible/windows-cis-l1.yml"
-    user            = "Administrator"
-    
-    # Keep this FALSE! This tells Ansible on the runner NOT to use a proxy
-    # to initiate the WinRM connection to the target VM's private IP.
-    use_proxy       = false 
-    
-    extra_arguments = [
-      "-e", "ansible_winrm_scheme=https",
-      "-e", "ansible_winrm_transport=ntlm",
-      "-e", "ansible_winrm_server_cert_validation=ignore",
-      "-e", "ansible_winrm_operation_timeout_sec=300",
-      "-e", "ansible_winrm_read_timeout_sec=330",
-      "--skip-tags", "winrm_connectivity",
-      "-e", "@./../ansible/cis-overrides.yml",
-    ]
+  # 3. Main CIS Hardening (Replaces Ansible)
+  provisioner "powershell" {
+    elevated_user     = "Administrator"
+    elevated_password = build.WinRMPassword
+    script            = "${path.root}/../packer-huawei-windows/scripts/Invoke-CISRemediation-Combined.ps1"
   }
 
   # 4. Flush GPO/Registry
