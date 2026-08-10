@@ -504,19 +504,6 @@ jobs:
             fi
           done
       
-      - name: Fetch Huawei ECS Serial Console Logs
-        if: always()
-        run: |
-          echo "Fetching serial console output to inspect script failure..."
-          cae ECS GetConsoleOutput \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --cli-output=json \
-            --server_id="${{ env.HW_SERVER_ID }}" \
-            > /tmp/console_output.json || true
-
-          echo "--- Serial Console Log ---"
-          jq -r '.output // .message //.' /tmp/console_output.json || cat /tmp/console_output.json
 
       # ──────────────────────────────────────────────────────────────────────
       # SCAN PHASE
