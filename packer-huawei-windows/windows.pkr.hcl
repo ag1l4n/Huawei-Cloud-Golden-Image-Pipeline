@@ -44,7 +44,7 @@ source "huaweicloud-ecs" "windows_cis" {
   winrm_timeout  = "30m"
 
   # Huawei requires the password to be set for the Administrator account
-  user_data_file = "./scripts/bootstrap-winrm.ps1"
+  user_data_file = var.user_data_file
 }
 
 build {
