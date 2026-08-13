@@ -196,7 +196,7 @@ jobs:
           $Cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
 
           # Create HTTPS WinRM Listener on port 5986
-          New-Item -Path WSMan:\LocalShell\Listener -Address * -Transport HTTPS -CertificateThumbprint $Cert.Thumbprint -Force
+          New-Item -Path WSMan:\localhost\Listener -Address * -Transport HTTPS -CertificateThumbprint $Cert.Thumbprint -Force
 
           # Ensure Windows Firewall allows WinRM HTTPS
           New-NetFirewallRule -Name "WinRM-HTTPS-In-TCP" -DisplayName "WinRM HTTPS" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
@@ -219,7 +219,7 @@ jobs:
         env:
           PACKER_LOG: "1"
         run: |
-          packer build -on-error=abort\
+          packer build\
             -force \
             -var "image_version=${{ needs.prepare.outputs.new_version }}" \
             -var "user_data_file=${{ env.USERDATA_FILE }}" \
