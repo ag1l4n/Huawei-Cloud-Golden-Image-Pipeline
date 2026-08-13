@@ -120,6 +120,8 @@ Set-ItemProperty -Path $gpFwPath `
     -Value "v2.30|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=22|Name=Allow-SSH-Pipeline|" `
     -Type String -Force
 
+gpupdate /force /target:computer
+
 # Remove the local store rule since GP path takes precedence
 Remove-NetFirewallRule -Name "Allow-SSH-Pipeline" -ErrorAction SilentlyContinue
 
