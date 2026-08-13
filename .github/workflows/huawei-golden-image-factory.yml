@@ -569,15 +569,15 @@ jobs:
           echo "Removing any 0-byte reports to prevent GitHub Release API errors..."
           find . -maxdepth 1 -name "*-cis-report.*" -type f -size 0 -print -delete
 
-      - name: Destroy Ephemeral VM (Huawei)
-        if: always() && env.HW_SERVER_ID != ''
-        run: |
-          cae ECS DeleteServers \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-warning=false \
-            --servers.1.id="$HW_SERVER_ID" \
-            --delete_volume=true
-          echo "Ephemeral VM $HW_SERVER_ID deletion requested."
+      # - name: Destroy Ephemeral VM (Huawei)
+      #   if: always() && env.HW_SERVER_ID != ''
+      #   run: |
+      #     cae ECS DeleteServers \
+      #       --cli-region="${{ env.HW_LOCATION }}" \
+      #       --cli-warning=false \
+      #       --servers.1.id="$HW_SERVER_ID" \
+      #       --delete_volume=true
+      #     echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
       - name: Upload Report Artifact
         if: always()
