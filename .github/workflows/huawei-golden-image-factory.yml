@@ -219,7 +219,7 @@ jobs:
         env:
           PACKER_LOG: "1"
         run: |
-          packer build \
+          packer build -on-error=abort\
             -force \
             -var "image_version=${{ needs.prepare.outputs.new_version }}" \
             -var "user_data_file=${{ env.USERDATA_FILE }}" \
