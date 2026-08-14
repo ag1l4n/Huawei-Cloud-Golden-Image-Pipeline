@@ -390,6 +390,20 @@ function Set-CISSystemServices {
     }
 }
 
+function Set-CISWinRMSurvivalRule {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    Write-CISLog "Pre-flight - Preserving WinRM (5986) ahead of firewall lockdown"
+    if ($PSCmdlet.ShouldProcess("WinRM HTTPS (5986)", "Write GP firewall allow rule")) {
+        $gpFwPath = "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules"
+        if (-not (Test-Path $gpFwPath)) { New-Item -Path $gpFwPath -Force | Out-Null }
+        Set-ItemProperty -Path $gpFwPath `
+            -Name "Allow-WinRM-HTTPS-Pipeline" `
+            -Value "v2.30|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=5986|Name=Allow-WinRM-HTTPS-Pipeline|" `
+            -Type String -Force
+    }
+}
+
 # ===========================================================================
 # Section 9 - Windows Defender Firewall (registry)
 # ===========================================================================
@@ -730,6 +744,11 @@ try {
     Write-CISLog "=== CIS Windows Server 2022 v5.0.0 remediation (combined) ==="
     Write-CISLog ("Server role : {0}" -f $ServerRole)
     Write-CISLog ("WhatIf mode : {0}" -f [bool]$WhatIfPreference)
+
++   # Must run before Section 9 (Windows Defender Firewall) applies DefaultInboundAction=Block,
++   # and unconditionally regardless of -Sections filtering, since Packer's own WinRM session
++   # depends on 5986 staying reachable for the rest of this build.
++   Set-CISWinRMSurvivalRule
 
     if (-not $SkipBackup -and -not $WhatIfPreference) { Backup-CISState -Dir $BackupDir }
     else { Write-CISLog "Skipping backup (either -SkipBackup or -WhatIf)." }
