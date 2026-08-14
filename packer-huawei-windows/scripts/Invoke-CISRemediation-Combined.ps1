@@ -745,10 +745,10 @@ try {
     Write-CISLog ("Server role : {0}" -f $ServerRole)
     Write-CISLog ("WhatIf mode : {0}" -f [bool]$WhatIfPreference)
 
-+   # Must run before Section 9 (Windows Defender Firewall) applies DefaultInboundAction=Block,
-+   # and unconditionally regardless of -Sections filtering, since Packer's own WinRM session
-+   # depends on 5986 staying reachable for the rest of this build.
-+   Set-CISWinRMSurvivalRule
+    # Must run before Section 9 (Windows Defender Firewall) applies DefaultInboundAction=Block,
+    # and unconditionally regardless of -Sections filtering, since Packer's own WinRM session
+    # depends on 5986 staying reachable for the rest of this build.
+    Set-CISWinRMSurvivalRule
 
     if (-not $SkipBackup -and -not $WhatIfPreference) { Backup-CISState -Dir $BackupDir }
     else { Write-CISLog "Skipping backup (either -SkipBackup or -WhatIf)." }
