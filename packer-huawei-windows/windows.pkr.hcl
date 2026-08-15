@@ -59,8 +59,6 @@ build {
   # NOTE: This requires internet access to Microsoft servers! It will succeed
   # because we configure netsh winhttp proxy in bootstrap-winrm.ps1 below.
   provisioner "powershell" {
-    elevated_user     = "Administrator"
-    elevated_password = build.WinRMPassword
     inline = [
       "Write-Output 'Installing OpenSSH Server...'",
       "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0",
@@ -69,6 +67,13 @@ build {
       "Stop-Service sshd"
     ]
   }
+
+  provisioner "powershell" {
+     inline = [
+       "Restart-Service WinRM -Force",
+       "Start-Sleep -Seconds 15"
+     ]
+   }
 
   # 3. Main CIS Hardening (Replaces Ansible)
   provisioner "powershell" {
