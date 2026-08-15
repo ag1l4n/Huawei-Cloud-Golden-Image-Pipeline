@@ -56,6 +56,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
 
 # ===========================================================================
 # Shared helpers
@@ -269,7 +270,7 @@ function Set-CISUserRights {
     )
     Write-CISLog "Section 2.2 - User Rights Assignment (role: $ServerRole)"
     
-    $cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    
 
     if ($ServerRole -eq "domain_controller") {
         $rights = @(
