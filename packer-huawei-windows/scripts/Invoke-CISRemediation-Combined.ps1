@@ -268,10 +268,12 @@ function Set-CISUserRights {
         [string]$BackupDir
     )
     Write-CISLog "Section 2.2 - User Rights Assignment (role: $ServerRole)"
+    
+    $cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
 
     if ($ServerRole -eq "domain_controller") {
         $rights = @(
-        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20"   # 2.2.44
+        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$cbInitSid"   # 2.2.44 (+ cloudbase-init, required for UserDataPlugin's CreateProcessAsUserW)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
@@ -313,7 +315,7 @@ function Set-CISUserRights {
         )
     } else {
         $rights = @(
-        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20"   # 2.2.44
+        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$cbInitSid"   # 2.2.44 (+ cloudbase-init, required for UserDataPlugin's CreateProcessAsUserW)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
