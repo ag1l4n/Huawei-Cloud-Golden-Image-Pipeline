@@ -56,7 +56,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+
 
 # ===========================================================================
 # Shared helpers
@@ -273,6 +273,7 @@ function Set-CISUserRights {
     
 
     if ($ServerRole -eq "domain_controller") {
+        $cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
         $rights = @(
         "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$cbInitSid"   # 2.2.44 (+ cloudbase-init, required for UserDataPlugin's CreateProcessAsUserW)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
@@ -315,6 +316,7 @@ function Set-CISUserRights {
         "SeTrustedCredManAccessPrivilege = "   # 2.2.1
         )
     } else {
+        $cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
         $rights = @(
         "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$cbInitSid"   # 2.2.44 (+ cloudbase-init, required for UserDataPlugin's CreateProcessAsUserW)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
