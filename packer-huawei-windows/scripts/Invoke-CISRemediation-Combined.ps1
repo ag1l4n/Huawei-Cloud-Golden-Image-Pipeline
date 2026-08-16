@@ -56,6 +56,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:CbInitSid = (New-Object System.Security.Principal.NTAccount(".\cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
 
 
 # ===========================================================================
@@ -270,12 +271,9 @@ function Set-CISUserRights {
     )
     Write-CISLog "Section 2.2 - User Rights Assignment (role: $ServerRole)"
     
-    
-
     if ($ServerRole -eq "domain_controller") {
-        $cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
         $rights = @(
-        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$cbInitSid"   # 2.2.44 (+ cloudbase-init, required for UserDataPlugin's CreateProcessAsUserW)
+        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$script:CbInitSid"   # 2.2.44 (+ cloudbase-init, see UserDataPlugin note above)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
@@ -316,9 +314,8 @@ function Set-CISUserRights {
         "SeTrustedCredManAccessPrivilege = "   # 2.2.1
         )
     } else {
-        $cbInitSid = (New-Object System.Security.Principal.NTAccount("cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
         $rights = @(
-        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$cbInitSid"   # 2.2.44 (+ cloudbase-init, required for UserDataPlugin's CreateProcessAsUserW)
+        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$script:CbInitSid"   # 2.2.44 (+ cloudbase-init, see UserDataPlugin note above)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
