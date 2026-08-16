@@ -56,8 +56,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$script:CbInitSid = (New-Object System.Security.Principal.NTAccount(".\cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
-
+$script:CbInitSid = $null
+try {
+    $script:CbInitSid = (New-Object System.Security.Principal.NTAccount(".\cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+} catch {
+    Write-Warning "cloudbase-init account not yet resolvable at build time (expected) — relying on CIS-Gold-State.inf for the persistent fix instead."
+}
 
 # ===========================================================================
 # Shared helpers
@@ -273,7 +277,7 @@ function Set-CISUserRights {
     
     if ($ServerRole -eq "domain_controller") {
         $rights = @(
-        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$script:CbInitSid"   # 2.2.44 (+ cloudbase-init, see UserDataPlugin note above)
+        ("SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20" + $(if ($script:CbInitSid) { ",*$script:CbInitSid" } else { "" }))   # 2.2.44 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
@@ -315,7 +319,7 @@ function Set-CISUserRights {
         )
     } else {
         $rights = @(
-        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20,*$script:CbInitSid"   # 2.2.44 (+ cloudbase-init, see UserDataPlugin note above)
+        ("SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20" + $(if ($script:CbInitSid) { ",*$script:CbInitSid" } else { "" }))   # 2.2.44 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
