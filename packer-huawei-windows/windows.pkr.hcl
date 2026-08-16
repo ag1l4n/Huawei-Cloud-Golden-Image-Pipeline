@@ -68,13 +68,6 @@ build {
     ]
   }
 
-  provisioner "powershell" {
-     inline = [
-       "Restart-Service WinRM -Force",
-       "Start-Sleep -Seconds 15"
-     ]
-   }
-
   # 3. Main CIS Hardening (Replaces Ansible)
   provisioner "powershell" {
     elevated_user     = "Administrator"
