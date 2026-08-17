@@ -276,8 +276,10 @@ function Set-CISUserRights {
     Write-CISLog "Section 2.2 - User Rights Assignment (role: $ServerRole)"
     
     if ($ServerRole -eq "domain_controller") {
+        $cbInitClause = ""
+        if ($script:CbInitSid) { $cbInitClause = ",*$script:CbInitSid" }
         $rights = @(
-        ("SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20" + $(if ($script:CbInitSid) { ",*$script:CbInitSid" } else { "" }))   # 2.2.44 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
+        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20$cbInitClause"   # 2.2.44 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
@@ -318,8 +320,10 @@ function Set-CISUserRights {
         "SeTrustedCredManAccessPrivilege = "   # 2.2.1
         )
     } else {
+        $cbInitClause = ""
+        if ($script:CbInitSid) { $cbInitClause = ",*$script:CbInitSid" }
         $rights = @(
-        ("SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20" + $(if ($script:CbInitSid) { ",*$script:CbInitSid" } else { "" }))   # 2.2.44 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
+        "SeAssignPrimaryTokenPrivilege = *S-1-5-18,*S-1-5-19,*S-1-5-20$cbInitClause"   # 2.2.44 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
         "SeAuditPrivilege = *S-1-5-19,*S-1-5-20"   # 2.2.30
         "SeBackupPrivilege = *S-1-5-32-544"   # 2.2.11
         "SeBatchLogonRight = *S-1-5-32-544"   # 2.2.36
