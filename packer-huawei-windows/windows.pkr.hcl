@@ -74,6 +74,7 @@ build {
     elevated_password = build.WinRMPassword
     script            = "${path.root}/../packer-huawei-windows/scripts/Invoke-CISRemediation-Combined.ps1"
   }
+  
 
   # 4. Flush GPO/Registry
   provisioner "windows-restart" {
