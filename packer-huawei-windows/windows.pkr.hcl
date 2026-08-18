@@ -57,8 +57,6 @@ build {
 
   # 2. Install OpenSSH Server
   provisioner "powershell" {
-    elevated_user     = "Administrator"
-    elevated_password = build.WinRMPassword
     inline = [
       "Write-Output 'Installing OpenSSH Server...'",
       "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0",
