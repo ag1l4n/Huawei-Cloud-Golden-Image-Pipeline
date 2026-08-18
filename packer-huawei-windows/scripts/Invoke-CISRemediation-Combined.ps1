@@ -60,7 +60,7 @@ $script:CbInitSid = $null
 try {
     $script:CbInitSid = (New-Object System.Security.Principal.NTAccount(".\cloudbase-init")).Translate([System.Security.Principal.SecurityIdentifier]).Value
 } catch {
-    Write-Warning "cloudbase-init account not yet resolvable at build time (expected) — relying on CIS-Gold-State.inf for the persistent fix instead."
+    Write-Warning "cloudbase-init account not yet resolvable at build time (expected) - relying on CIS-Gold-State.inf for the persistent fix instead."
 }
 
 # ===========================================================================
@@ -335,7 +335,7 @@ function Set-CISUserRights {
         "SeDebugPrivilege = *S-1-5-32-544"   # 2.2.19
         "SeDenyBatchLogonRight = *S-1-5-32-546"   # 2.2.22
         "SeDenyInteractiveLogonRight = *S-1-5-32-546"   # 2.2.24
-        "SeDenyNetworkLogonRight = *S-1-5-32-546"   # 2.2.21 — *S-1-5-114 dropped: blocks svc_audit (local admin) SSH logon (S4U network-logon), see incident 2026-07-23
+        "SeDenyNetworkLogonRight = *S-1-5-32-546"   # 2.2.21 - *S-1-5-114 dropped: blocks svc_audit (local admin) SSH logon (S4U network-logon), see incident 2026-07-23
         "SeDenyRemoteInteractiveLogonRight = *S-1-5-32-546,*S-1-5-113"   # 2.2.26
         "SeDenyServiceLogonRight = *S-1-5-32-546"   # 2.2.23
         "SeEnableDelegationPrivilege = "   # 2.2.28
@@ -850,7 +850,7 @@ finally { Stop-Transcript | Out-Null }
 #   MANUAL  18.10.93.2.1   Ensure 'Prevent users from modifying settings' is set to 'Enabled' (Automated)
 
 # ===========================================================================
-# EXCLUDED — hardware/architecture incompatible with this fleet's VM class
+# EXCLUDED - hardware/architecture incompatible with this fleet's VM class
 # (no nested-virtualization/hypervisor exposure to guest, Secure Boot
 # reports "Unsupported") and with the SSH-based ghost-user audit model.
 # Applying the UEFI-locked settings (18.9.5.3/.5/18.9.27.2) to a VM whose
@@ -859,12 +859,12 @@ finally { Stop-Transcript | Out-Null }
 # first gating on hardware capability (Confirm-SecureBootUEFI +
 # Get-CimInstance Win32_DeviceGuard -Property VirtualizationBasedSecurityStatus).
 # ===========================================================================
-#   EXCLUDED  18.4.1        LocalAccountTokenFilterPolicy — breaks local-account SSH pubkey auth (svc_audit)
+#   EXCLUDED  18.4.1        LocalAccountTokenFilterPolicy - breaks local-account SSH pubkey auth (svc_audit)
 #   EXCLUDED  18.9.5.1      EnableVirtualizationBasedSecurity
 #   EXCLUDED  18.9.5.2      RequirePlatformSecurityFeatures
 #   EXCLUDED  18.9.5.3      HypervisorEnforcedCodeIntegrity (UEFI lock)
 #   EXCLUDED  18.9.5.4      HVCIMATRequired
-#   EXCLUDED  18.9.5.5      LsaCfgFlags — Credential Guard, MS role (UEFI lock)
-#   EXCLUDED  18.9.5.6      LsaCfgFlags — Credential Guard, DC role
-#   EXCLUDED  18.9.5.7      ConfigureSystemGuardLaunch — Secure Launch
-#   EXCLUDED  18.9.27.2     RunAsPPL — LSA process protection (UEFI lock)
+#   EXCLUDED  18.9.5.5      LsaCfgFlags - Credential Guard, MS role (UEFI lock)
+#   EXCLUDED  18.9.5.6      LsaCfgFlags - Credential Guard, DC role
+#   EXCLUDED  18.9.5.7      ConfigureSystemGuardLaunch - Secure Launch
+#   EXCLUDED  18.9.27.2     RunAsPPL - LSA process protection (UEFI lock)
