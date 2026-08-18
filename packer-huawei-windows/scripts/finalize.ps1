@@ -137,4 +137,11 @@ $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 Register-ScheduledTask -TaskName 'RestoreCISPolicies' -Action $action -Trigger $trigger -Principal $principal -Force
 
+# Delay Cloudbase-Init's own auto-start so RestoreCIS.ps1's AtStartup task
+# (which grants cloudbase-init the SeAssignPrimaryTokenPrivilege it needs
+# to respawn itself) reliably runs first. Without this, both race to start
+# in the same early-boot window with no ordering guarantee, and
+# Cloudbase-Init has been consistently losing that race.
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\cloudbase-init" -Name "DelayedAutostart" -Value 1 -Type DWord -Force
+
 Write-Output "finalize.ps1 complete. WinRM GPO lockdown and Sysprep are handled by the final provisioner step."
