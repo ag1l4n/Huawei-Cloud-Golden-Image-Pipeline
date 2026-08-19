@@ -258,26 +258,39 @@ jobs:
 
           Write-Output "=== Starting Ephemeral Scanner SSH Initialization ==="
 
-          Write-Output "Waiting for CIS scheduled tasks to settle..."
-          # Adjust the sleep time based on how long your RestoreCIS task usually takes to run
-          Start-Sleep -Seconds 90 
-          Write-Output "Wait complete. Proceeding with SSH injection."
+          # 1. DYNAMIC WAIT LOOP: Wait for RestoreCIS hardening to complete
+          $logPath = "C:\Windows\Setup\Scripts\RestoreCIS.log"
+          $waited = 0
+          while ($waited -lt 600) {
+              if (Test-Path $logPath) {
+                  $logContent = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
+                  if ($logContent -match "sshd restarted") {
+                      Write-Output "CIS Hardening completed after $waited seconds."
+                      break
+                  }
+              }
+              Write-Output "Waiting for CIS hardening... ($waited s)"
+              Start-Sleep -Seconds 10
+              $waited += 10
+          }
 
-          # 1. Enable Remote UAC Token (Fixes SSH Local Admin Access)
+          if ($waited -ge 600) {
+              Write-Output "WARNING: Timed out waiting for CIS hardening log. Proceeding anyway."
+          }
+
+          # 2. Enable Remote UAC Token (Fixes SSH Local Admin Access)
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" `
                           -Name "LocalAccountTokenFilterPolicy" -Value 1 -Type DWord -Force
 
-          # 2. Prepare OpenSSH ProgramData Directory
+          # 3. Prepare OpenSSH ProgramData Directory
           $sshDataDir = "$env:ProgramData\ssh"
           if (!(Test-Path $sshDataDir)) {
               New-Item -ItemType Directory -Force -Path $sshDataDir | Out-Null
           }
 
-          # 3. Inject Public Key into administrators_authorized_keys
+          # 4. Inject Public Key into administrators_authorized_keys
           $adminKeysPath = "$sshDataDir\administrators_authorized_keys"
           Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
-
-          # 4. Enforce Strict ACLs on administrators_authorized_keys
           icacls.exe $adminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "BUILTIN\Administrators:(F)" | Out-Null
 
           # 5. Inject Key Directly for 'sysadmin' Account
@@ -293,7 +306,7 @@ jobs:
           $sshdConfig = "$sshDataDir\sshd_config"
           if (Test-Path $sshdConfig) {
               (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" `
-                                        -replace "(?m)^#?PubkeyAuthentication no", "PubkeyAuthentication yes" | Set-Content $sshdConfig -Encoding Ascii
+                                          -replace "(?m)^#?PubkeyAuthentication no", "PubkeyAuthentication yes" | Set-Content $sshdConfig -Encoding Ascii
           }
 
           # 7. Configure Firewall Rule for Port 22
