@@ -500,6 +500,7 @@ jobs:
             sleep 10
             if [ "$i" -eq 60 ]; then
               echo "ERROR: SSH never became available after 600s."
+              cae ECS StopServers --server-ids="$HW_SERVER_ID"
               exit 1
             fi
           done
