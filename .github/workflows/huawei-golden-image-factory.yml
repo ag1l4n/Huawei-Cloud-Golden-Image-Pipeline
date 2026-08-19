@@ -254,81 +254,67 @@ jobs:
             # We use 'EOF' without indentation to ensure GitHub Actions YAML doesn't break
             cat << 'EOF' > /tmp/hw_scan_userdata.ps1
           #ps1_sysnative
-          $ErrorActionPreference = "Continue"
+          Start-Transcript -Path "C:\ProgramData\UserData_Execution.log" -Append
 
-          Write-Output "--- Starting Ephemeral Scanner Initialization ---"
+          Write-Output "=== Starting Ephemeral Scanner SSH Initialization ==="
 
-          # 1. WAIT FOR CIS HARDENING TO FINISH
-          # Prevent Cloudbase-Init from injecting SSH keys before the CIS task resets them
-          $logPath = "C:\Windows\Setup\Scripts\RestoreCIS.log"
-          $waited = 0
-          while ($waited -lt 600) {
-              if (Test-Path $logPath) {
-                  $logContent = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
-                  if ($logContent -match "sshd restarted") {
-                      Write-Output "CIS Hardening completed."
-                      break
-                  }
-              }
-              Write-Output "Waiting for CIS hardening... ($waited s)"
-              Start-Sleep -Seconds 10
-              $waited += 10
+          # 1. Enable Remote UAC Token (Fixes SSH Local Admin Access)
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" `
+                          -Name "LocalAccountTokenFilterPolicy" -Value 1 -Type DWord -Force
+
+          # 2. Prepare OpenSSH ProgramData Directory
+          $sshDataDir = "$env:ProgramData\ssh"
+          if (!(Test-Path $sshDataDir)) {
+              New-Item -ItemType Directory -Force -Path $sshDataDir | Out-Null
           }
 
-          # 2. FIX UAC REMOTE RESTRICTIONS
-          # Required for users in the Administrators group to authenticate over network/SSH
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "LocalAccountTokenFilterPolicy" -Value 1 -Force
-
-          # 3. INJECT SSH KEY FOR 'sysadmin' USER (Bulletproof method)
-          $sysadminSid = (Get-LocalUser -Name 'sysadmin').SID.Value
-          $userSsh = "C:\Users\sysadmin\.ssh"
-          if (-not (Test-Path $userSsh)) { New-Item -ItemType Directory -Force -Path $userSsh | Out-Null }
-          Set-Content -Path "$userSsh\authorized_keys" -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
-          icacls.exe "$userSsh\authorized_keys" /inheritance:r /grant "*$($sysadminSid):(F)" /grant "NT AUTHORITY\SYSTEM:(F)" | Out-Null
-
-          # 4. INJECT FALLBACK SSH KEY FOR ADMINISTRATORS GROUP
-          $sshProgramData = "$env:ProgramData\ssh"
-          if (-not (Test-Path $sshProgramData)) { New-Item -ItemType Directory -Force -Path $sshProgramData | Out-Null }
-          $adminKeysPath = "$sshProgramData\administrators_authorized_keys"
+          # 3. Inject Public Key into administrators_authorized_keys
+          $adminKeysPath = "$sshDataDir\administrators_authorized_keys"
           Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+
+          # 4. Enforce Strict ACLs on administrators_authorized_keys
           icacls.exe $adminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "BUILTIN\Administrators:(F)" | Out-Null
 
-          # 5. FIX STRICTMODES IN SSHD_CONFIG
-          $sshdConfig = "$sshProgramData\sshd_config"
+          # 5. Inject Key Directly for 'sysadmin' Account
+          $sysadminSshDir = "C:\Users\sysadmin\.ssh"
+          if (!(Test-Path $sysadminSshDir)) {
+              New-Item -ItemType Directory -Force -Path $sysadminSshDir | Out-Null
+          }
+          $sysadminKeysPath = "$sysadminSshDir\authorized_keys"
+          Set-Content -Path $sysadminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          icacls.exe $sysadminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "sysadmin:(F)" | Out-Null
+
+          # 6. Configure sshd_config Settings
+          $sshdConfig = "$sshDataDir\sshd_config"
           if (Test-Path $sshdConfig) {
-              (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" | Set-Content $sshdConfig -Encoding Ascii
+              (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" `
+                                        -replace "(?m)^#?PubkeyAuthentication no", "PubkeyAuthentication yes" | Set-Content $sshdConfig -Encoding Ascii
           }
 
-          # 6. ENSURE FIREWALL ALLOWS SSH
-          if (!(Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
-              New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+          # 7. Configure Firewall Rule for Port 22
+          Remove-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" `
+                              -DisplayName "OpenSSH Server (sshd)" `
+                              -Enabled True `
+                              -Direction Inbound `
+                              -Protocol TCP `
+                              -Action Allow `
+                              -LocalPort 22 | Out-Null
+
+          # 8. Ensure SSH Host Keys Exist and Restart Service
+          if (!(Test-Path "$sshDataDir\ssh_host_rsa_key")) {
+              Write-Output "Host keys missing. Regenerating OpenSSH host keys..."
+              & "C:\Program Files\OpenSSH-Win64\ssh-keygen.exe" -A 2>$null
+              if ($LASTEXITCODE -ne 0) { ssh-keygen -A }
           }
 
-          # 7. RESTART SSHD
+          Set-Service -Name sshd -StartupType Automatic
           Restart-Service sshd -Force
-          Write-Output "--- SSH configuration finalized and service restarted ---"
-          # 8. DIAGNOSTIC TRACE (If things fail, dump logs to console)
-          Write-Output "--- Dumping Cloudbase-Init Log for Debugging ---"
-          $CBInitLog = "C:\Program Files\Cloudbase Solutions\Cloudbase-Init\log\cloudbase-init.log"
-          if (Test-Path $CBInitLog) {
-              Get-Content $CBInitLog -Tail 100
-          } else {
-              Write-Output "Cloudbase-init log not found at expected path."
-          }
-          
-          Write-Output "--- Checking OpenSSH Service Status ---"
-          Get-Service sshd | Select-Object Status, StartType
-          
-          Write-Output "--- Checking Authorized Keys File ---"
-          if (Test-Path "C:\Users\sysadmin\.ssh\authorized_keys") {
-              Write-Output "authorized_keys exists and contains:"
-              Get-Content "C:\Users\sysadmin\.ssh\authorized_keys"
-          } else {
-              Write-Output "ERROR: authorized_keys file does NOT exist!"
-          }
+
+          Write-Output "=== SSH Initialization Finished Successfully ==="
+          Stop-Transcript
           EOF
 
-            # Inject the actual public key into the placeholder
             sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
             echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
 
