@@ -258,6 +258,11 @@ jobs:
 
           Write-Output "=== Starting Ephemeral Scanner SSH Initialization ==="
 
+          Write-Output "Waiting for CIS scheduled tasks to settle..."
+          # Adjust the sleep time based on how long your RestoreCIS task usually takes to run
+          Start-Sleep -Seconds 90 
+          Write-Output "Wait complete. Proceeding with SSH injection."
+
           # 1. Enable Remote UAC Token (Fixes SSH Local Admin Access)
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" `
                           -Name "LocalAccountTokenFilterPolicy" -Value 1 -Type DWord -Force
