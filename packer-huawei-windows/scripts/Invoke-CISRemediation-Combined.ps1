@@ -293,6 +293,7 @@ function Set-CISUserRights {
         "SeDenyInteractiveLogonRight = *S-1-5-32-546"   # 2.2.24
         "SeDenyNetworkLogonRight = *S-1-5-32-546"   # 2.2.20
         "SeDenyRemoteInteractiveLogonRight = *S-1-5-32-546"   # 2.2.25
+        "SeServiceLogonRight = *S-1-5-80-0$cbInitClause"   # 2.2.7 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
         "SeDenyServiceLogonRight = *S-1-5-32-546"   # 2.2.23
         "SeEnableDelegationPrivilege = *S-1-5-32-544"   # 2.2.27
         "SeImpersonatePrivilege = *S-1-5-32-544,*S-1-5-19,*S-1-5-20,*S-1-5-6"   # 2.2.31
@@ -337,6 +338,7 @@ function Set-CISUserRights {
         "SeDenyInteractiveLogonRight = *S-1-5-32-546"   # 2.2.24
         "SeDenyNetworkLogonRight = *S-1-5-32-546"   # 2.2.21 - *S-1-5-114 dropped: blocks svc_audit (local admin) SSH logon (S4U network-logon), see incident 2026-07-23
         "SeDenyRemoteInteractiveLogonRight = *S-1-5-32-546,*S-1-5-113"   # 2.2.26
+        "SeServiceLogonRight = *S-1-5-80-0$cbInitClause"   # 2.2.7 (+ cloudbase-init when resolvable; CIS-Gold-State.inf is the real fix at boot time)
         "SeDenyServiceLogonRight = *S-1-5-32-546"   # 2.2.23
         "SeEnableDelegationPrivilege = "   # 2.2.28
         "SeImpersonatePrivilege = *S-1-5-32-544,*S-1-5-19,*S-1-5-20,*S-1-5-6"   # 2.2.32
