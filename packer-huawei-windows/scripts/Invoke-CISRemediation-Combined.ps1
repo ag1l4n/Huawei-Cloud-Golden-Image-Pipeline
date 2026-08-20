@@ -181,7 +181,7 @@ function Set-CISAccountPolicies {
     Write-CISLog "Section 1 - Password & Account Lockout policy"
     $sa = @{
         'PasswordHistorySize'       = 24    # 1.1.1
-        'MaximumPasswordAge'        = 365   # 1.1.2
+        'MaximumPasswordAge'        = 60    # 1.1.2
         'MinimumPasswordAge'        = 1     # 1.1.3
         'MinimumPasswordLength'     = 14    # 1.1.4
         'PasswordComplexity'        = 1     # 1.1.5
@@ -247,8 +247,8 @@ function Set-CISSecurityOptions {
     Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'NoLMHash' -Type DWord -Value 1  # 2.3.11.5
     Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'LmCompatibilityLevel' -Type DWord -Value 5  # 2.3.11.7
     Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LDAP' -Name 'LDAPClientIntegrity' -Type DWord -Value 1  # 2.3.11.8
-    Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name 'NTLMMinClientSec' -Type DWord -Value 537395200  # 2.3.11.9
-    Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name 'NTLMMinServerSec' -Type DWord -Value 537395200  # 2.3.11.10
+    Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name 'NTLMMinClientSec' -Type DWord -Value 536870912  # 2.3.11.9
+    Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name 'NTLMMinServerSec' -Type DWord -Value 536870912  # 2.3.11.10
     Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name 'AuditReceivingNTLMTraffic' -Type DWord -Value 2  # 2.3.11.11
     if ($ServerRole -eq 'domain_controller') { Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters' -Name 'AuditNTLMInDomain' -Type DWord -Value 7 }  # 2.3.11.12
     Set-CISRegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0' -Name 'RestrictSendingNTLMTraffic' -Type DWord -Value 1  # 2.3.11.13

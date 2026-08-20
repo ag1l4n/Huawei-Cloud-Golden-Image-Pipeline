@@ -272,7 +272,7 @@ jobs:
               }
               Write-Output "Waiting for CIS hardening... ($waited s)"
               Start-Sleep -Seconds 10
-              $waited  = 10
+              $waited  += 10
           }
 
           if ($waited -ge 600) {
@@ -335,6 +335,10 @@ jobs:
           Set-Service -Name sshd -StartupType Automatic
           Restart-Service sshd -Force
 
+          # Re-lock local firewall policy merge for CIS compliance
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile" -Name "AllowLocalPolicyMerge" -Value 0 -Type DWord -Force
+          gpupdate /force
+
           Write-Output "=== SSH Initialization Finished Successfully ==="
           Stop-Transcript
           EOF
@@ -356,7 +360,7 @@ jobs:
           EOF
             
             sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
-            chmod  x /tmp/hw_scan_userdata.sh
+            chmod +x /tmp/hw_scan_userdata.sh
             echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
           fi
 
@@ -579,15 +583,15 @@ jobs:
           echo "Removing any 0-byte reports to prevent GitHub Release API errors..."
           find . -maxdepth 1 -name "*-cis-report.*" -type f -size 0 -print -delete
 
-      # - name: Destroy Ephemeral VM (Huawei)
-      #   if: always() && env.HW_SERVER_ID != ''
-      #   run: |
-      #     cae ECS DeleteServers \
-      #       --cli-region="${{ env.HW_LOCATION }}" \
-      #       --cli-warning=false \
-      #       --servers.1.id="$HW_SERVER_ID" \
-      #       --delete_volume=true
-      #     echo "Ephemeral VM $HW_SERVER_ID deletion requested."
+      - name: Destroy Ephemeral VM (Huawei)
+        if: always() && env.HW_SERVER_ID != ''
+        run: |
+          cae ECS DeleteServers \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-warning=false \
+            --servers.1.id="$HW_SERVER_ID" \
+            --delete_volume=true
+          echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
       - name: Upload Report Artifact
         if: always()
