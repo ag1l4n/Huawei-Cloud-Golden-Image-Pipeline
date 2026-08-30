@@ -5,6 +5,9 @@ win_2022_cis_pass_max_days: 60
 win_2022_cis_pass_min_days: 1
 win_2022_cis_pass_complex: true
 
+cis_windows_account_disable_administrator: false
+cis_windows_account_rename_administrator: false
+
 win_2022_cis_rule_1_2_1: true
 win_2022_cis_rule_1_2_2: true
 win_2022_cis_rule_1_2_3: true

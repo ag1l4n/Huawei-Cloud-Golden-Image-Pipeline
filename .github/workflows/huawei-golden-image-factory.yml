@@ -12,6 +12,7 @@ on:
           - all
           - Rocky 9
           - Ubuntu 24.04
+          - Windows Server 2022
       scan_only:
         description: 'Skip Packer Build (Run Compliance Scan Only)'
         required: true
@@ -27,6 +28,10 @@ on:
         type: string
       ubuntu_image_name_override:
         description: 'Custom Ubuntu Image Name Override (Optional)'
+        required: false
+        type: string
+      windows_image_name_override:
+        description: 'Custom Windows Image Name Override (Optional)'
         required: false
         type: string
 
@@ -72,11 +77,13 @@ jobs:
         run: |
           CHOICE="${{ inputs.os_choice }}"
           if [[ -z "$CHOICE" || "$CHOICE" == "all" ]]; then
-            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+            echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"},{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"},{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Rocky 9" ]]; then
             echo 'matrix=[{"os":"Huawei Rocky 9","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           elif [[ "$CHOICE" == "Ubuntu 24.04" ]]; then
             echo 'matrix=[{"os":"Huawei Ubuntu 24.04","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
+          elif [[ "$CHOICE" == "Windows Server 2022" ]]; then
+            echo 'matrix=[{"os":"Huawei Windows Server 2022","runner":"self-hosted"}]' >> $GITHUB_OUTPUT
           fi
 
   # ============================================================
@@ -85,7 +92,7 @@ jobs:
   matrix-factory:
     name: Build & Scan (${{ matrix.os_config.os }})
     needs: prepare
-    runs-on: ${{ matrix.os_config.runner }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -106,21 +113,43 @@ jobs:
       PKR_VAR_hw_vpc_id:            ${{ secrets.HW_VPC_ID }}
       PKR_VAR_hw_subnet_id:         ${{ secrets.HW_SUBNET_ID }}
       PKR_VAR_hw_security_group_id: ${{ secrets.HW_SECURITY_GROUP_ID }}
+      PKR_VAR_windows_admin_pass:   ${{ secrets.WINDOWS_LOCAL_ADMIN_PASSWORD }}
+      PKR_VAR_hw_eip_id:            ${{ secrets.HW_EXISTING_EIP_ID }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Resolve VM Slug
         run: |
           case "${{ matrix.os_config.os }}" in
-            "Huawei Rocky 9")       echo "VM_SLUG=hw-rocky"  >> $GITHUB_ENV ;;
-            "Huawei Ubuntu 24.04")  echo "VM_SLUG=hw-ubuntu" >> $GITHUB_ENV ;;
+            "Huawei Rocky 9")             echo "VM_SLUG=hw-rocky"   >> $GITHUB_ENV ;;
+            "Huawei Ubuntu 24.04")        echo "VM_SLUG=hw-ubuntu"  >> $GITHUB_ENV ;;
+            "Huawei Windows Server 2022") echo "VM_SLUG=hw-windows" >> $GITHUB_ENV ;;
             *)
               echo "ERROR: Unrecognised OS '${{ matrix.os_config.os }}'"
               exit 1
               ;;
           esac
+
+      - name: 'Install CAE CLI, Ansible & Set Configuration'
+        run: |
+          sudo apt-get update -qq
+          python3 -m pip install --user --upgrade pip
+          python3 -m pip install --user 'ansible>=10.0.0,<11.0.0'
+          pip install "pywinrm>=0.3.0"
+          curl -LO "https://tm-cli.obs.my-kualalumpur-1.alphaedge.tmone.com.my/cli/latest/caecloud-cli-linux-amd64.tar.gz"
+          tar -zxvf caecloud-cli-linux-amd64.tar.gz
+          sudo mv $(pwd)/cae /usr/local/bin/
+          echo "y" | cae version
+          echo "y" | cae configure set \
+            --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
+            --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
+            --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
+            --cli-region="${{ env.HW_LOCATION }}" \
+            --cli-skip-secure-verify=true
 
       # ──────────────────────────────────────────────────────────────────────
       # PACKER BUILD PHASE
@@ -136,12 +165,8 @@ jobs:
         if: ${{ inputs.scan_only != true }}
         working-directory: ./ansible
         run: |
-          if [ -d "roles/ubuntu24-cis" ]; then
-            echo "Ansible roles already exist. Skipping download."
-          else
-            echo "Roles missing. Installing from requirements.yml..."
-            ansible-galaxy install -r requirements.yml --roles-path roles/
-          fi
+          echo "Roles missing. Installing from requirements.yml..."
+          ansible-galaxy install -r requirements.yml --roles-path roles/
 
       - name: Packer Init
         if: ${{ inputs.scan_only != true }}
@@ -149,42 +174,60 @@ jobs:
           PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: packer init .
         working-directory: >-
-          ${{ matrix.os_config.os == 'Huawei Rocky 9'
-           && './packer-huawei-rocky'
-           ||   './packer-huawei-ubuntu' }}
-
-      - name: Configure Huawei Cloud CLI
-        run: |
-          echo "y" | cae configure set \
-            --cli-access-key="${{ secrets.HW_ACCESS_KEY }}" \
-            --cli-secret-key="${{ secrets.HW_SECRET_KEY }}" \
-            --cli-project-id="${{ secrets.HW_PROJECT_ID }}" \
-            --cli-region="${{ env.HW_LOCATION }}" \
-            --cli-skip-secure-verify=true
-
-      - name: Prepare user_data with PermitRootLogin fix
+          ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
+           || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
+           || './packer-huawei-windows' }}
+        
+      - name: Prepare user_data with WinRM and PermitRootLogin fix
         if: ${{ inputs.scan_only != true }}
         run: |
-          printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_userdata.sh
-          chmod +x /tmp/hw_userdata.sh
-          echo "Verifying user_data contents:"
-          cat /tmp/hw_userdata.sh
-          echo "USERDATA_FILE=/tmp/hw_userdata.sh" >> $GITHUB_ENV
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            cat << 'EOF' > /tmp/hw_scan_userdata.ps1
+          #ps1_sysnative
+          $ErrorActionPreference = "Stop"
+          Write-Output "--- Configuring WinRM for Packer ---"
+
+          # Enable WinRM basic auth and unencrypted options if needed
+          winrm quickconfig -q
+          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+          winrm set winrm/config/service/auth '@{Basic="true"}'
+
+          # Generate Self-Signed Certificate for WinRM HTTPS
+          $Cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
+
+          # Create HTTPS WinRM Listener on port 5986
+          New-Item -Path WSMan:\localhost\Listener -Address * -Transport HTTPS -CertificateThumbprint $Cert.Thumbprint -Force
+
+          # Ensure Windows Firewall allows WinRM HTTPS
+          New-NetFirewallRule -Name "WinRM-HTTPS-In-TCP" -DisplayName "WinRM HTTPS" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 5986 -Action Allow
+
+          Write-Output "--- WinRM Listener Initialized Successfully ---"
+          Set-Service -Name WinRM -StartupType Automatic
+          Start-Service WinRM
+          EOF
+            
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
+          else
+            # Linux root login fix
+            printf '#!/bin/bash\nsed -i "s/^#\\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config\nsystemctl restart sshd\n' > /tmp/hw_scan_userdata.sh
+            chmod  x /tmp/hw_scan_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
+          fi
 
       - name: Build Golden Image
         if: ${{ inputs.scan_only != true }}
         env:
           PACKER_LOG: "1"
         run: |
-          packer build \
+          packer build\
             -force \
             -var "image_version=${{ needs.prepare.outputs.new_version }}" \
-            -var "user_data_file=/tmp/hw_userdata.sh" \
+            -var "user_data_file=${{ env.USERDATA_FILE }}" \
             .
         working-directory: >-
-          ${{ matrix.os_config.os == 'Huawei Rocky 9'
-           && './packer-huawei-rocky'
-           ||   './packer-huawei-ubuntu' }}
+          ${{ matrix.os_config.os == 'Huawei Rocky 9' && './packer-huawei-rocky'
+           || matrix.os_config.os == 'Huawei Ubuntu 24.04' && './packer-huawei-ubuntu'
+           || './packer-huawei-windows' }}
 
       # ──────────────────────────────────────────────────────────────────────
       # DEPLOY EPHEMERAL VM FOR SCANNING
@@ -197,17 +240,129 @@ jobs:
         id: image
         run: |
           case "${{ matrix.os_config.os }}" in
-            # ── prefix matches the actual IMS naming convention ──
-            "Huawei Rocky 9")       echo "name=${{ inputs.rocky_image_name_override  || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
-            "Huawei Ubuntu 24.04")  echo "name=${{ inputs.ubuntu_image_name_override || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Rocky 9")       echo "name=${{ inputs.rocky_image_name_override   || format('rocky9-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Ubuntu 24.04")  echo "name=${{ inputs.ubuntu_image_name_override  || format('ubuntu24.04-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
+            "Huawei Windows Server 2022") echo "name=${{ inputs.windows_image_name_override || format('win2022-cis-v{0}', needs.prepare.outputs.new_version) }}" >> $GITHUB_OUTPUT ;;
           esac
 
       - name: Prepare user_data for Pipeline Scanner
         run: |
           echo "--- Generating Cloud-Init for Ephemeral Scanner ---"
+          rm -f /tmp/hw_scan_userdata.ps1 /tmp/hw_scan_userdata.sh
           SCANNER_PUB_KEY=$(cat ~/.ssh/scanner_key.pub)
-          printf "#!/bin/bash\nmkdir -p /home/sysadmin/.ssh\necho '$SCANNER_PUB_KEY' >> /home/sysadmin/.ssh/authorized_keys\nchown -R sysadmin:sysadmin /home/sysadmin/.ssh\nchmod 700 /home/sysadmin/.ssh\nchmod 600 /home/sysadmin/.ssh/authorized_keys\n" > /tmp/hw_scan_userdata.sh
-          cat /tmp/hw_scan_userdata.sh
+
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            # We use 'EOF' without indentation to ensure GitHub Actions YAML doesn't break
+            cat << 'EOF' > /tmp/hw_scan_userdata.ps1
+          #ps1_sysnative
+          Start-Transcript -Path "C:\ProgramData\UserData_Execution.log" -Append
+
+          Write-Output "=== Starting Ephemeral Scanner SSH Initialization ==="
+
+          # 1. DYNAMIC WAIT LOOP: Wait for RestoreCIS hardening to complete
+          $logPath = "C:\Windows\Setup\Scripts\RestoreCIS.log"
+          $waited = 0
+          while ($waited -lt 600) {
+              if (Test-Path $logPath) {
+                  $logContent = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
+                  if ($logContent -match "sshd restarted") {
+                      Write-Output "CIS Hardening completed after $waited seconds."
+                      break
+                  }
+              }
+              Write-Output "Waiting for CIS hardening... ($waited s)"
+              Start-Sleep -Seconds 10
+              $waited  += 10
+          }
+
+          if ($waited -ge 600) {
+              Write-Output "WARNING: Timed out waiting for CIS hardening log. Proceeding anyway."
+          }
+
+          # 2. Enable Remote UAC Token (Fixes SSH Local Admin Access)
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" `
+                          -Name "LocalAccountTokenFilterPolicy" -Value 1 -Type DWord -Force
+
+          # 3. Prepare OpenSSH ProgramData Directory
+          $sshDataDir = "$env:ProgramData\ssh"
+          if (!(Test-Path $sshDataDir)) {
+              New-Item -ItemType Directory -Force -Path $sshDataDir | Out-Null
+          }
+
+          # 4. Inject Public Key into administrators_authorized_keys
+          $adminKeysPath = "$sshDataDir\administrators_authorized_keys"
+          Set-Content -Path $adminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          icacls.exe $adminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "BUILTIN\Administrators:(F)" | Out-Null
+
+          # 5. Inject Key Directly for 'sysadmin' Account
+          $sysadminSshDir = "C:\Users\sysadmin\.ssh"
+          if (!(Test-Path $sysadminSshDir)) {
+              New-Item -ItemType Directory -Force -Path $sysadminSshDir | Out-Null
+          }
+          $sysadminKeysPath = "$sysadminSshDir\authorized_keys"
+          Set-Content -Path $sysadminKeysPath -Value "SCANNER_PUB_KEY_PLACEHOLDER" -Encoding Ascii -Force
+          icacls.exe $sysadminKeysPath /inheritance:r /grant "NT AUTHORITY\SYSTEM:(F)" /grant "sysadmin:(F)" | Out-Null
+
+          # 6. Configure sshd_config Settings
+          $sshdConfig = "$sshDataDir\sshd_config"
+          if (Test-Path $sshdConfig) {
+              (Get-Content $sshdConfig) -replace "(?m)^#?StrictModes yes", "StrictModes no" `
+                                          -replace "(?m)^#?PubkeyAuthentication no", "PubkeyAuthentication yes" | Set-Content $sshdConfig -Encoding Ascii
+          }
+
+          # 7. Configure Firewall Rule for Port 22
+          # Local-store rules get silently discarded by this image's CIS-hardened
+          # DefaultInboundAction=Block baseline unless AllowLocalPolicyMerge is
+          # enabled for the active network profile (only true for Public).
+          # Write directly into the GP-scoped firewall store instead, same
+          # technique RestoreCIS.ps1 uses, so this doesn't depend on RestoreCIS's
+          # own timing at all.
+          $gpFwPath = "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\FirewallRules"
+          if (-not (Test-Path $gpFwPath)) { New-Item -Path $gpFwPath -Force | Out-Null }
+          Set-ItemProperty -Path $gpFwPath ``
+              -Name "Allow-SSH-Scanner" ``
+              -Value "v2.30|Action=Allow|Active=TRUE|Dir=In|Protocol=6|LPort=22|Name=Allow-SSH-Scanner|" ``
+              -Type String -Force
+          gpupdate /force /target:computer
+
+          # 8. Ensure SSH Host Keys Exist and Restart Service
+          if (!(Test-Path "$sshDataDir\ssh_host_rsa_key")) {
+              Write-Output "Host keys missing. Regenerating OpenSSH host keys..."
+              & "C:\Program Files\OpenSSH-Win64\ssh-keygen.exe" -A 2>$null
+              if ($LASTEXITCODE -ne 0) { ssh-keygen -A }
+          }
+
+          Set-Service -Name sshd -StartupType Automatic
+          Restart-Service sshd -Force
+
+          # Re-lock local firewall policy merge for CIS compliance
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile" -Name "AllowLocalPolicyMerge" -Value 0 -Type DWord -Force
+          gpupdate /force
+
+          Write-Output "=== SSH Initialization Finished Successfully ==="
+          Stop-Transcript
+          EOF
+
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.ps1
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.ps1" >> $GITHUB_ENV
+
+          else
+            # Linux scanner userdata block
+            cat << 'EOF' > /tmp/hw_scan_userdata.sh
+          #!/bin/bash
+          mkdir -p /home/sysadmin/.ssh
+          echo 'SCANNER_PUB_KEY_PLACEHOLDER' >> /home/sysadmin/.ssh/authorized_keys
+          chown -R sysadmin:sysadmin /home/sysadmin/.ssh
+          chmod 700 /home/sysadmin/.ssh
+          chmod 600 /home/sysadmin/.ssh/authorized_keys
+          sed -i "s/^#\?PermitRootLogin.*/PermitRootLogin yes/" /etc/ssh/sshd_config
+          systemctl restart sshd
+          EOF
+            
+            sed -i "s|SCANNER_PUB_KEY_PLACEHOLDER|${SCANNER_PUB_KEY}|g" /tmp/hw_scan_userdata.sh
+            chmod +x /tmp/hw_scan_userdata.sh
+            echo "USERDATA_FILE=/tmp/hw_scan_userdata.sh" >> $GITHUB_ENV
+          fi
 
       - name: Deploy Ephemeral VM
         run: |
@@ -233,7 +388,14 @@ jobs:
           echo "HW_IMAGE_ID=$HW_IMAGE_ID" >> $GITHUB_ENV
 
           EPHEMERAL_NAME="scan-ephemeral-${{ env.VM_SLUG }}"
-          ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
+
+          if [[ "${{ matrix.os_config.os }}" == "Huawei Windows Server 2022" ]]; then
+            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.ps1)
+          else
+            ENCODED_USER_DATA=$(base64 -w 0 /tmp/hw_scan_userdata.sh)
+          fi
+
+          cae ECS CreateServers --help | grep -i public
 
           cae ECS CreateServers \
             --cli-region="${{ env.HW_LOCATION }}" \
@@ -245,13 +407,8 @@ jobs:
             --server.nics.1.subnet_id="${{ secrets.HW_SUBNET_ID }}" \
             --server.security_groups.1.id="${{ secrets.HW_SECURITY_GROUP_ID }}" \
             --server.root_volume.volumetype="SAS" \
-            --server.root_volume.size=40 \
-            --server.publicip.eip.iptype="5_bgp" \
-            --server.publicip.eip.bandwidth.size=5 \
-            --server.publicip.eip.bandwidth.sharetype="PER" \
-            --server.publicip.eip.bandwidth.chargemode="traffic" \
-            --server.publicip.delete_on_termination="true" \
             --server.user_data="$ENCODED_USER_DATA" \
+            --server.publicip.id="${{ secrets.HW_EXISTING_EIP_ID }}" \
             > create_server_output.json 2>&1
 
           echo "--- Raw CreateServers response ---"
@@ -262,8 +419,6 @@ jobs:
             exit 1
           fi
 
-          # ── Write server ID and name to GITHUB_ENV immediately ──────────────
-          # Do this before polling so teardown can clean up even if polling fails
           HW_SERVER_ID=$(jq -r '.serverIds[0] // empty' create_server_output.json)
           echo "HW_SERVER_ID=$HW_SERVER_ID" >> $GITHUB_ENV
           echo "EPHEMERAL_NAME=$EPHEMERAL_NAME" >> $GITHUB_ENV
@@ -289,9 +444,11 @@ jobs:
             echo "Job status: $STATUS (attempt $i/30)"
 
             if [[ "$STATUS" == "SUCCESS" ]]; then 
-              echo "VM is ACTIVE. Waiting 30s for cloud-init to complete..."
+              echo "VM is ACTIVE. Waiting 30s for cloud-init and NIC propagation..."
               sleep 30
-              break; fi
+              break
+            fi
+            
             if [[ "$STATUS" == "FAIL" ]]; then
               echo "ERROR: ECS CreateServers job failed."
               echo "$JOB_OUTPUT"
@@ -313,14 +470,21 @@ jobs:
             --server_id="$HW_SERVER_ID" \
             > /tmp/show_server_output.json 2>/dev/null
 
+          jq -r '.server.addresses' /tmp/show_server_output.json
+
           echo "--- Raw ShowServer response ---"
           cat /tmp/show_server_output.json
 
-          VM_IP=$(jq -r '.server.addresses | to_entries[0].value[0].addr // empty' \
-            /tmp/show_server_output.json)
+          VM_IP=$(jq -r '.server.addresses[][] | select(.["OS-EXT-IPS:type"] == "floating") | .addr // empty' /tmp/show_server_output.json)
+
+          if [[ -z "$VM_IP" ]]; then
+            echo "ERROR: Failed to retrieve public IP address from server details."
+            cat /tmp/show_server_output.json
+            exit 1
+          fi
 
           echo "VM_IP=$VM_IP" >> $GITHUB_ENV
-          echo "Ephemeral VM IP: $VM_IP"
+          echo "Ephemeral VM Public IP: $VM_IP"
 
       # ──────────────────────────────────────────────────────────────────────
       # WAIT FOR SSH
@@ -328,7 +492,7 @@ jobs:
 
       - name: Wait for SSH Connection
         run: |
-          for i in {1..20}; do
+          for i in {1..90}; do
             if ssh -o StrictHostKeyChecking=no \
                   -o ConnectTimeout=5 \
                   -i ~/.ssh/scanner_key \
@@ -336,10 +500,10 @@ jobs:
               echo "SSH is up after attempt $i."
               break
             fi
-            echo "Attempt $i/20 — SSH not ready, retrying in 10s..."
+            echo "Attempt $i/90 — SSH not ready, retrying in 10s..."
             sleep 10
-            if [ "$i" -eq 20 ]; then
-              echo "ERROR: SSH never became available after 200s."
+            if [ "$i" -eq 90 ]; then
+              echo "ERROR: SSH never became available after 900s."
               exit 1
             fi
           done
@@ -347,6 +511,30 @@ jobs:
       # ──────────────────────────────────────────────────────────────────────
       # SCAN PHASE
       # ──────────────────────────────────────────────────────────────────────
+
+      - name: Run Cinc Auditor & Generate Multi-Format Reports (Windows)
+        if: ${{ matrix.os_config.os == 'Huawei Windows Server 2022' }}
+        run: |
+          echo "Installing Cinc Auditor..."
+          curl -sL https://omnitruck.cinc.sh/install.sh | sudo bash -s -- -P cinc-auditor
+          
+          echo "Executing Cinc Auditor against hardened Windows Image..."
+          for i in {1..10}; do
+            if cinc-auditor exec https://github.com/dev-sec/windows-baseline \
+              -t ssh://sysadmin@${{ env.VM_IP }} \
+              -i ~/.ssh/scanner_key \
+              --input server_role=member_server \
+              --input domain_joined=false \
+              --backend-cache \
+              --reporter html:./hw-windows-cis-report.html json:./hw-windows-cis-report.json cli; then
+              
+              echo "Cinc Auditor completed successfully."
+              break
+            else
+              echo "Warning: Authentication dropped. Retrying in 15 seconds..."
+              sleep 15
+            fi
+          done
 
       - name: Run Huawei Rocky OpenSCAP & Download Report
         if: ${{ matrix.os_config.os == 'Huawei Rocky 9' }}
@@ -402,7 +590,6 @@ jobs:
             --cli-region="${{ env.HW_LOCATION }}" \
             --cli-warning=false \
             --servers.1.id="$HW_SERVER_ID" \
-            --delete_publicip=true \
             --delete_volume=true
           echo "Ephemeral VM $HW_SERVER_ID deletion requested."
 
